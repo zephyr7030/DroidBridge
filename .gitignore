@@ -1,0 +1,44 @@
+.gradle/
+.kotlin/
+.idea/
+local.properties
+**/build/
+rust/target/
+app/src/main/jniLibs/
+app/build/generated/jniLibs/
+magisk/bin/*.so
+magisk/bin/droidbridge-supervisor
+magisk/bin/droidbridged
+out/
+dist/
+release-out/
+*.apk
+*.aab
+*.zip
+*.jks
+*.keystore
+*.pk8
+*.pem
+*.key
+*.p12
+*.part
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# Release packages and local release staging
+release/
+
+# Editor, agent-local and native build state
+.vscode/
+*.iml
+.cxx/
+.externalNativeBuild/
+captures/
+.claude/settings.local.json
+.superpowers/
+
+# Secrets never belong in the tree; keep them outside the repository
+secrets/
+*.secret

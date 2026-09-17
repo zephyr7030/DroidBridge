@@ -1,0 +1,5 @@
+Compile-only declarations for the DroidBridge API37 framework helper.
+Source: AOSP platform/frameworks/base, branch android17-release, revision 94b4c163b7dfe5ce3607f7bb8456f9573f7de57d.
+Derived from the AIDL/Java declarations of IActivityTaskManager, IPackageManager, IClipboard,
+INotificationManager, INotificationListener and their parameter types at that revision.
+License: Apache License, Version 2.0. These classes are never packaged into helper jars.

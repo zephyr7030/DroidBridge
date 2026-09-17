@@ -1,0 +1,41 @@
+{
+  "fixtures": [
+    {
+      "json": {
+        "payload": {
+          "action": "status",
+          "input": {
+            "detail": "compact"
+          },
+          "tool": "context"
+        },
+        "protocol_version": 1,
+        "request_id": "018f47f2-26a8-4f26-8a65-728feb0e8461"
+      },
+      "name": "context_status_request"
+    },
+    {
+      "json": {
+        "outcome": "success",
+        "protocol_version": 1,
+        "request_id": "018f47f2-26a8-4f26-8a65-728feb0e8461",
+        "result": {}
+      },
+      "name": "success_response"
+    },
+    {
+      "json": {
+        "error": {
+          "code": "INVALID_ARGUMENT",
+          "operation": "context.status",
+          "retryable": false
+        },
+        "outcome": "error",
+        "protocol_version": 1,
+        "request_id": "018f47f2-26a8-4f26-8a65-728feb0e8461"
+      },
+      "name": "error_response"
+    }
+  ],
+  "schema_version": 1
+}

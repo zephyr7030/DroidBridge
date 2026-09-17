@@ -1,0 +1,34 @@
+[package]
+name = "app_native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "droidbridge_exec_guard"
+path = "src/bin/droidbridge_exec_guard.rs"
+
+[dependencies]
+contract = { path = "../contract" }
+domain = { path = "../domain" }
+runtime = { path = "../runtime" }
+persistence = { path = "../persistence" }
+base64.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+jni.workspace = true
+libc.workspace = true
+rustix.workspace = true
+tokio.workspace = true

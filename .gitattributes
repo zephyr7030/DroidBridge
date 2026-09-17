@@ -1,0 +1,9 @@
+# Store all text as LF by default so checkout behavior is independent of core.autocrlf.
+* text=auto eol=lf
+
+# Windows command launchers use native CRLF in the working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary wrapper input is never line-normalized.
+*.jar binary

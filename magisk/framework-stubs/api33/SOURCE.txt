@@ -1,0 +1,5 @@
+Compile-only declarations for the DroidBridge API33 framework helper.
+Source: AOSP platform/frameworks/base, branch android13-release, revision d27f9960456403533af0a0d5d9f14cf71c9c8cf6.
+Derived from the AIDL/Java declarations of IActivityTaskManager, IPackageManager, IClipboard,
+INotificationManager, INotificationListener and their parameter types at that revision.
+License: Apache License, Version 2.0. These classes are never packaged into helper jars.

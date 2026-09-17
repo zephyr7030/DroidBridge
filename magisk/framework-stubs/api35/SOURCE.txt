@@ -1,0 +1,5 @@
+Compile-only declarations for the DroidBridge API35 framework helper.
+Source: AOSP platform/frameworks/base, branch android15-release, revision cc8bb19595c661f5cf42f330457000e643c67d1b.
+Derived from the AIDL/Java declarations of IActivityTaskManager, IPackageManager, IClipboard,
+INotificationManager, INotificationListener and their parameter types at that revision.
+License: Apache License, Version 2.0. These classes are never packaged into helper jars.

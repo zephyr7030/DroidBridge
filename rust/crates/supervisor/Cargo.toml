@@ -1,0 +1,18 @@
+[package]
+name = "supervisor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "droidbridge-supervisor"
+path = "src/main.rs"
+
+[dependencies]
+persistence = { path = "../persistence" }
+contract = { path = "../contract" }
+domain = { path = "../domain" }
+chrono.workspace = true
+uuid.workspace = true
+libc.workspace = true

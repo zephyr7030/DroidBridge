@@ -1,0 +1,11 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2926,7 +2926,7 @@
+ # Make sure {f}lex supports the -P, --header-file, and --nounput flags
+ # and supports processing our scanner.l.
+ #
+-if(WIN32)
++if(CMAKE_HOST_WIN32)
+     set(NULL_DEVICE "NUL:")
+ else()
+     set(NULL_DEVICE "/dev/null")

@@ -1,0 +1,2356 @@
+{
+  "schema_version": 1,
+  "fields": [
+    {
+      "canonical_path": "/name",
+      "order": 0,
+      "label_source": "resource",
+      "label_resource": "automation_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true
+    },
+    {
+      "canonical_path": "/enabled",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "automation_enabled",
+      "control": "switch",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "boolean",
+      "required": true
+    },
+    {
+      "canonical_path": "/trigger/type",
+      "order": 0,
+      "label_source": "resource",
+      "label_resource": "field_trigger_type",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "at",
+          "label_source": "resource",
+          "label_resource": "trigger_at"
+        },
+        {
+          "value": "interval",
+          "label_source": "resource",
+          "label_resource": "trigger_interval"
+        },
+        {
+          "value": "rrule",
+          "label_source": "resource",
+          "label_resource": "trigger_rrule"
+        },
+        {
+          "value": "event",
+          "label_source": "resource",
+          "label_resource": "trigger_event"
+        }
+      ]
+    },
+    {
+      "canonical_path": "/trigger/at",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_trigger_at",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/trigger/type",
+          "values": [
+            "at"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/trigger/every_ms",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_trigger_every_ms",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/trigger/type",
+          "values": [
+            "interval"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/trigger/rrule",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_trigger_rrule",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/trigger/type",
+          "values": [
+            "rrule"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/trigger/timezone",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "field_trigger_timezone",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/trigger/type",
+          "values": [
+            "rrule"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/trigger/name",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_trigger_event_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/trigger/type",
+          "values": [
+            "event"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/trigger/match",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "field_trigger_event_match",
+      "control": "key_scalar_table",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "scalar",
+      "required": false,
+      "visible_when": [
+        {
+          "canonical_path": "/trigger/type",
+          "values": [
+            "event"
+          ]
+        }
+      ],
+      "max_rows": 32,
+      "key_max_utf8_bytes": 64,
+      "scalar_kinds": [
+        "null",
+        "boolean",
+        "integer",
+        "string"
+      ],
+      "string_max_utf8_bytes": 4096
+    },
+    {
+      "canonical_path": "/action/type",
+      "order": 0,
+      "label_source": "resource",
+      "label_resource": "field_action_type",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "call",
+          "label_source": "resource",
+          "label_resource": "action_node_call"
+        },
+        {
+          "value": "sequence",
+          "label_source": "resource",
+          "label_resource": "action_node_sequence"
+        },
+        {
+          "value": "conditional",
+          "label_source": "resource",
+          "label_resource": "action_node_conditional"
+        },
+        {
+          "value": "repeat",
+          "label_source": "resource",
+          "label_resource": "action_node_repeat"
+        },
+        {
+          "value": "delay",
+          "label_source": "resource",
+          "label_resource": "action_node_delay"
+        },
+        {
+          "value": "set_state",
+          "label_source": "resource",
+          "label_resource": "action_node_set_state"
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/tool",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "task_detail_tool",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "filesystem",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "command",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "network",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "visual",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "android",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "call"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/action",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "task_detail_action",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "manage",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "download",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "call"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/action",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "task_detail_action",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "run",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "call"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/action",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "task_detail_action",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "diagnose",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "call"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/action",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "task_detail_action",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "interact",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "call"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/action",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "task_detail_action",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "launch",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "clipboard",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "call"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "android"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/conditional/condition/source",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_condition_source",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "state",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "trigger",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "conditional"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/conditional/condition/key",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "field_condition_key",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "conditional"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/conditional/condition/operator",
+      "order": 3,
+      "label_source": "resource",
+      "label_resource": "field_condition_operator",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "equals",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "not_equals",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "greater_than",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "less_than",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "exists",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "conditional"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/conditional/condition/value",
+      "order": 4,
+      "label_source": "resource",
+      "label_resource": "field_condition_value",
+      "control": "scalar_editor",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "scalar",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "conditional"
+          ]
+        },
+        {
+          "canonical_path": "/action/conditional/condition/operator",
+          "values": [
+            "equals",
+            "not_equals",
+            "greater_than",
+            "less_than"
+          ]
+        }
+      ],
+      "scalar_kinds": [
+        "null",
+        "boolean",
+        "integer",
+        "string"
+      ],
+      "string_max_utf8_bytes": 4096
+    },
+    {
+      "canonical_path": "/action/repeat/count",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_repeat_count",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "repeat"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/repeat/delay_ms",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "field_repeat_delay_ms",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 0,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "repeat"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/delay/duration_ms",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_delay_duration_ms",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "delay"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/set_state/key",
+      "order": 1,
+      "label_source": "resource",
+      "label_resource": "field_state_key",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "set_state"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/set_state/value",
+      "order": 2,
+      "label_source": "resource",
+      "label_resource": "field_state_value",
+      "control": "scalar_editor",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "scalar",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/type",
+          "values": [
+            "set_state"
+          ]
+        }
+      ],
+      "scalar_kinds": [
+        "null",
+        "boolean",
+        "integer",
+        "string"
+      ],
+      "string_max_utf8_bytes": 4096
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/operation",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "mkdir",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "copy",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "move",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "delete",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/target/type",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "path",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "content_uri",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "mkdir",
+            "delete"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/target/value",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "mkdir",
+            "delete"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/source/type",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "path",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "content_uri",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "copy",
+            "move"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/source/value",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "copy",
+            "move"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/destination/type",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "path",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "content_uri",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "copy",
+            "move"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/destination/value",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "copy",
+            "move"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/parents",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "switch",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "boolean",
+      "required": false,
+      "default": false,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "mkdir"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/recursive",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "switch",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "boolean",
+      "required": false,
+      "default": false,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "copy",
+            "move",
+            "delete"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/manage/overwrite",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "switch",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "boolean",
+      "required": false,
+      "default": false,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "manage"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/filesystem/manage/operation",
+          "values": [
+            "copy",
+            "move"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/download/url",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "download"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/download/destination/type",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "path",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "content_uri",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "download"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/download/destination/value",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "download"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/download/overwrite",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "switch",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "boolean",
+      "required": false,
+      "default": false,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "download"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/filesystem/download/timeout_ms",
+      "order": 4,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 120000,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "filesystem"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "download"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/command",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/run_as",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "app",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "shell",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "root",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/cwd",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "optional",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": false,
+      "wrapped_control": "outlined_text",
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/stdin",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "optional",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": false,
+      "wrapped_control": "outlined_text",
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/timeout_ms",
+      "order": 4,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 30000,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/max_output_bytes",
+      "order": 5,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 65536,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/command/run/as_task",
+      "order": 6,
+      "label_source": "wire_name",
+      "control": "switch",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "boolean",
+      "required": false,
+      "default": false,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "command"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "run"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/test",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "connectivity",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "dns",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "tcp",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "tls",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "route",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/name",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "dns"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/record_type",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": false,
+      "default": "A",
+      "options": [
+        {
+          "value": "A",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "AAAA",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "dns"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/host",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "tcp",
+            "tls"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/port",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "tcp"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/port",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 443,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "tls"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/server_name",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "optional",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": false,
+      "wrapped_control": "outlined_text",
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "tls"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/timeout_ms",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 5000,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "tcp"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/timeout_ms",
+      "order": 4,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 5000,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "tls"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/network/diagnose/destination_ip",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "network"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "diagnose"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/network/diagnose/test",
+          "values": [
+            "route"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/operation",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "tap",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "long_press",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "swipe",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "text",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "key",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/target",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "node",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "coordinate",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "tap",
+            "long_press"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/node_ref",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "tap",
+            "long_press"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/target",
+          "values": [
+            "node"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/observation_id",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "tap",
+            "long_press"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/target",
+          "values": [
+            "coordinate"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/x",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "tap",
+            "long_press"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/target",
+          "values": [
+            "coordinate"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/y",
+      "order": 4,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "tap",
+            "long_press"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/target",
+          "values": [
+            "coordinate"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/observation_id",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "swipe"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/from_x",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "swipe"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/from_y",
+      "order": 3,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "swipe"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/to_x",
+      "order": 4,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "swipe"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/to_y",
+      "order": 5,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "swipe"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/duration_ms",
+      "order": 6,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 300,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "swipe"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/text",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "text"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/node_ref",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "optional",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": false,
+      "wrapped_control": "outlined_text",
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "text"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/key_code",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "key"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/visual/interact/meta_state",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "integer",
+      "required": false,
+      "default": 0,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "visual"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "interact"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/visual/interact/operation",
+          "values": [
+            "key"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/android/launch/operation",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "package",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "component",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "android"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/android/launch/package_name",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "android"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "launch"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/android/launch/class_name",
+      "order": 2,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "android"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "launch"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/android/launch/operation",
+          "values": [
+            "component"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/android/clipboard/operation",
+      "order": 0,
+      "label_source": "wire_name",
+      "control": "single_choice",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "options": [
+        {
+          "value": "read",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "write",
+          "label_source": "wire_name"
+        },
+        {
+          "value": "clear",
+          "label_source": "wire_name"
+        }
+      ],
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "android"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "clipboard"
+          ]
+        }
+      ]
+    },
+    {
+      "canonical_path": "/action/call/args/android/clipboard/text",
+      "order": 1,
+      "label_source": "wire_name",
+      "control": "outlined_text",
+      "sensitive": false,
+      "validation": "contract",
+      "value_kind": "string",
+      "required": true,
+      "visible_when": [
+        {
+          "canonical_path": "/action/call/tool",
+          "values": [
+            "android"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/action",
+          "values": [
+            "clipboard"
+          ]
+        },
+        {
+          "canonical_path": "/action/call/args/android/clipboard/operation",
+          "values": [
+            "write"
+          ]
+        }
+      ]
+    }
+  ]
+}

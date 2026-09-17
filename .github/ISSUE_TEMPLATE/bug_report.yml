@@ -1,0 +1,61 @@
+name: Bug report / 问题反馈
+description: Something does not work as expected. / 功能没有按预期工作。
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here; see SECURITY.md.
+        安全漏洞请不要在这里提交，请按 SECURITY.md 私下报告。
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / 发生了什么
+      description: What you did, what you expected, and what happened instead. / 你做了什么、期望什么、实际发生了什么。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: DroidBridge version / 版本
+      description: App version, and the Magisk module version if installed. / App 版本；如装了 Magisk 模块也请写上模块版本。
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version / 设备与系统版本
+      placeholder: e.g. OnePlus 13, ColorOS 15, Android 15
+    validations:
+      required: true
+  - type: dropdown
+    id: privilege
+    attributes:
+      label: Privilege level / 权限档位
+      options:
+        - No root / 无 Root
+        - Shizuku
+        - Magisk module / Magisk 模块
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Agent connection / 智能体连接方式
+      options:
+        - ChatGPT tunnel / ChatGPT 隧道
+        - Local MCP / 本地 MCP
+        - Not related / 无关
+    validations:
+      required: true
+  - type: textarea
+    id: tool
+    attributes:
+      label: Tool call and response / 工具调用与返回
+      description: The tool, action and input, and the response or error code. Remove anything private. / 工具名、操作和参数，以及返回内容或错误码。请去掉隐私信息。
+      render: json
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics / 诊断信息
+      description: Attach the export from Settings → Diagnostics. If the app was stopped in the background, also paste `adb shell dumpsys activity exit-info com.droidbridge.android`. / 请附上 设置 → 诊断 导出的文件；如果是后台被结束，请附上 exit-info 输出。

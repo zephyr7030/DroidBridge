@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "vectors": [
+    {
+      "name": "old_task",
+      "records": [{ "kind": "task", "execution": 1001, "instance": 7001, "state": "created" }],
+      "proofs": [{ "execution": 1001, "instance": 7001, "boot": "old", "format": "empty" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["clean"], "cleanup_requirements": ["no_guard_action"], "settlements": ["interrupt_task"], "finalizations": ["cleanup_task_temporary_and_remove_proof"], "prior_instances": [7001], "cleanup_verified": true }
+    },
+    {
+      "name": "old_synchronous",
+      "records": [{ "kind": "synchronous", "execution": 1002, "instance": 7002, "state": "running" }],
+      "proofs": [{ "execution": 1002, "instance": 7002, "boot": "old", "format": "empty" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["clean"], "cleanup_requirements": ["no_guard_action"], "settlements": ["interrupt_synchronous"], "finalizations": ["remove_proof"], "prior_instances": [7002], "cleanup_verified": true }
+    },
+    {
+      "name": "mixed_records",
+      "records": [
+        { "kind": "task", "execution": 1003, "instance": 7003, "state": "running" },
+        { "kind": "synchronous", "execution": 1004, "instance": 7004, "state": "running" }
+      ],
+      "proofs": [
+        { "execution": 1003, "instance": 7003, "boot": "old", "format": "empty" },
+        { "execution": 1004, "instance": 7004, "boot": "current", "format": "clean" }
+      ],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["clean", "clean"], "cleanup_requirements": ["no_guard_action", "no_guard_action"], "settlements": ["interrupt_task", "interrupt_synchronous"], "finalizations": ["cleanup_task_temporary_and_remove_proof", "remove_proof"], "prior_instances": [7003, 7004], "cleanup_verified": true }
+    },
+    {
+      "name": "duplicate_identity",
+      "records": [
+        { "kind": "task", "execution": 1005, "instance": 7005, "state": "created" },
+        { "kind": "synchronous", "execution": 1005, "instance": 7006, "state": "running" }
+      ],
+      "proofs": [],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "io_error", "recoveries": [], "cleanup_requirements": [], "settlements": [], "finalizations": [], "prior_instances": [], "cleanup_verified": false }
+    },
+    {
+      "name": "same_boot_live_guard",
+      "records": [{ "kind": "task", "execution": 1006, "instance": 7007, "state": "running" }],
+      "proofs": [{ "execution": 1006, "instance": 7007, "boot": "current", "format": "started" }],
+      "process_live": true,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["live"], "cleanup_requirements": ["await_guard_exit"], "settlements": ["interrupt_task"], "finalizations": ["blocked"], "prior_instances": [7007], "cleanup_verified": false }
+    },
+    {
+      "name": "same_boot_dead_guard",
+      "records": [{ "kind": "task", "execution": 1007, "instance": 7008, "state": "running" }],
+      "proofs": [{ "execution": 1007, "instance": 7008, "boot": "current", "format": "started" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["unverified"], "cleanup_requirements": ["quarantine"], "settlements": ["interrupt_task"], "finalizations": ["blocked"], "prior_instances": [7008], "cleanup_verified": false }
+    },
+    {
+      "name": "old_boot_without_frames",
+      "records": [],
+      "proofs": [{ "execution": 1008, "instance": 7009, "boot": "old", "format": "empty" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["clean"], "cleanup_requirements": ["no_guard_action"], "settlements": ["none"], "finalizations": ["remove_proof"], "prior_instances": [], "cleanup_verified": true }
+    },
+    {
+      "name": "partial_same_boot_proof",
+      "records": [{ "kind": "synchronous", "execution": 1009, "instance": 7010, "state": "running" }],
+      "proofs": [{ "execution": 1009, "instance": 7010, "boot": "current", "format": "partial" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["unverified"], "cleanup_requirements": ["quarantine"], "settlements": ["interrupt_synchronous"], "finalizations": ["blocked"], "prior_instances": [7010], "cleanup_verified": false }
+    },
+    {
+      "name": "malformed_same_boot_proof",
+      "records": [],
+      "proofs": [{ "execution": 1010, "instance": 7011, "boot": "current", "format": "malformed" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["unverified"], "cleanup_requirements": ["quarantine"], "settlements": ["none"], "finalizations": ["blocked"], "prior_instances": [], "cleanup_verified": false }
+    },
+    {
+      "name": "clean_same_boot_proof",
+      "records": [{ "kind": "task", "execution": 1011, "instance": 7012, "state": "interrupted" }],
+      "proofs": [{ "execution": 1011, "instance": 7012, "boot": "current", "format": "clean" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["clean"], "cleanup_requirements": ["no_guard_action"], "settlements": ["none"], "finalizations": ["cleanup_task_temporary_and_remove_proof"], "prior_instances": [], "cleanup_verified": true }
+    },
+    {
+      "name": "orphan_old_boot_proof",
+      "records": [],
+      "proofs": [{ "execution": 1012, "instance": 7013, "boot": "old", "format": "empty" }],
+      "process_live": false,
+      "finalization_succeeds": true,
+      "expected": { "result": "plan", "recoveries": ["clean"], "cleanup_requirements": ["no_guard_action"], "settlements": ["none"], "finalizations": ["remove_proof"], "prior_instances": [], "cleanup_verified": true }
+    },
+    {
+      "name": "finalization_failure",
+      "records": [{ "kind": "task", "execution": 1013, "instance": 7014, "state": "interrupted" }],
+      "proofs": [{ "execution": 1013, "instance": 7014, "boot": "old", "format": "empty" }],
+      "process_live": false,
+      "finalization_succeeds": false,
+      "expected": { "result": "plan", "recoveries": ["clean"], "cleanup_requirements": ["no_guard_action"], "settlements": ["none"], "finalizations": ["cleanup_task_temporary_and_remove_proof"], "prior_instances": [], "cleanup_verified": false }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+id=droidbridge
+name=DroidBridge
+version=0.3.0
+versionCode=3000
+author=DroidBridge
+description=DroidBridge privileged Android backend

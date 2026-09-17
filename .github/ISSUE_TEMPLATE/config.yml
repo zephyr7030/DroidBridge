@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability / 安全漏洞
+    url: https://github.com/zephyr7030/DroidBridge/security/advisories/new
+    about: Report privately. / 请私下报告。

@@ -1,0 +1,20 @@
+[package]
+name = "persistence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+contract = { path = "../contract" }
+domain = { path = "../domain" }
+runtime = { path = "../runtime" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+libc.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

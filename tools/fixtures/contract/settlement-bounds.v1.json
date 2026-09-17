@@ -1,0 +1,123 @@
+{
+  "entries": [
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "context.status"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "context.catalog"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "filesystem.inspect"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "filesystem.read"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "filesystem.write"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "filesystem.manage"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "filesystem.download"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "filesystem.archive"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "command.run"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "network.inspect"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "network.capture"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "network.packet"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "network.diagnose"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "visual.observe"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "visual.view"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "visual.interact"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "android.package"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "android.launch"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "android.intent"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "android.clipboard"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "android.notification"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "automation.list"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "automation.get"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "automation.save"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "automation.set_enabled"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "automation.delete"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "task_control.list"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "task_control.get"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
+      "operation": "task_control.cancel"
+    }
+  ],
+  "reserve_floor_bytes": 16384,
+  "schema_version": 1,
+  "store_hard_cap_bytes": 8388608
+}

@@ -1,0 +1,22 @@
+name: Feature request / 功能建议
+description: Suggest a capability or an improvement. / 建议新能力或改进。
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want an agent to be able to do? / 你希望智能体能做到什么？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议的行为
+  - type: dropdown
+    id: privilege
+    attributes:
+      label: Privilege level you can offer / 你能提供的权限档位
+      options:
+        - No root / 无 Root
+        - Shizuku
+        - Magisk module / Magisk 模块

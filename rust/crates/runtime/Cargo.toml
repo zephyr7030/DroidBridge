@@ -1,0 +1,30 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+contract = { path = "../contract" }
+domain = { path = "../domain" }
+tokio.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+rrule.workspace = true
+base64.workspace = true
+etherparse.workspace = true
+flate2.workspace = true
+rustix.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+tar.workspace = true
+zip.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rustix.workspace = true

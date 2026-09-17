@@ -1,0 +1,5 @@
+Compile-only declarations for the DroidBridge API34 framework helper.
+Source: AOSP platform/frameworks/base, branch android14-release, revision 6e47c7075b91983ae501114425ea25e6df7690c8.
+Derived from the AIDL/Java declarations of IActivityTaskManager, IPackageManager, IClipboard,
+INotificationManager, INotificationListener and their parameter types at that revision.
+License: Apache License, Version 2.0. These classes are never packaged into helper jars.
