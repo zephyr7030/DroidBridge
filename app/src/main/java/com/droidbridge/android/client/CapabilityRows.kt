@@ -63,6 +63,30 @@ data class CapabilityRow(
     val reason: String? = null,
 )
 
+/** A row in one of these states asks the user for nothing. */
+val settledCapabilityStates = setOf(
+    CapabilityRowState.Ready,
+    CapabilityRowState.Connected,
+    CapabilityRowState.Active,
+    CapabilityRowState.KeptByModule,
+    CapabilityRowState.KeptByShizuku,
+    CapabilityRowState.Confirmed,
+)
+
+/**
+ * How the user chose to let DroidBridge act on this phone, picked once during first setup. It
+ * shapes the setup guide only: afterwards the capabilities page reports every fact the device
+ * has, since a stronger backend may be installed long after setup.
+ */
+enum class SetupRoute(val wireValue: String) {
+    RootModule("root_module"),
+    Shizuku("shizuku"),
+    AccessibilityOnly("accessibility_only"),
+}
+
+/** The access and background steps of a guided setup, in the order that route asks for them. */
+data class SetupSteps(val access: List<CapabilityRow>, val background: List<CapabilityRow>)
+
 object CapabilityRows {
     /**
      * [rootDetected]: a root manager or `su` is present on the device, found without asking `su`.
@@ -118,6 +142,37 @@ object CapabilityRows {
     }
 
     const val ROOT_NOT_DETECTED = "ROOT_NOT_DETECTED"
+
+    /** The route this phone can take today, offered first while the user has not chosen one. */
+    fun recommendedRoute(rootDetected: Boolean, shizukuInstalled: Boolean): SetupRoute = when {
+        rootDetected -> SetupRoute.RootModule
+        shizukuInstalled -> SetupRoute.Shizuku
+        else -> SetupRoute.AccessibilityOnly
+    }
+
+    /**
+     * What the chosen route asks for during first setup. The backend another route would set up is
+     * not this route's work, and every other step is judged against a backend that is not there
+     * yet, so the route's own backend is asked for alone until it answers. A backend the device
+     * already has is always shown: that is what it reports, whatever was chosen.
+     */
+    fun steps(access: List<CapabilityRow>, background: List<CapabilityRow>, route: SetupRoute): SetupSteps {
+        val gate = when (route) {
+            SetupRoute.RootModule -> CapabilityRowKey.RootBackend
+            SetupRoute.Shizuku -> CapabilityRowKey.Shizuku
+            SetupRoute.AccessibilityOnly -> null
+        }
+        val backends = setOf(CapabilityRowKey.RootBackend, CapabilityRowKey.Shizuku)
+        val chosen = access.filter {
+            it.key !in backends || it.key == gate || it.state in settledCapabilityStates
+        }
+        val waiting = chosen.any { it.key == gate && it.state !in settledCapabilityStates }
+        return if (waiting) {
+            SetupSteps(chosen.filter { it.key == CapabilityRowKey.Runtime || it.key == gate }, emptyList())
+        } else {
+            SetupSteps(chosen, background)
+        }
+    }
 
     private fun withoutModule(snapshot: RuntimeSnapshot): RuntimeSnapshot {
         fun settle(facts: Map<String, AvailabilityFact>, keys: (String) -> Boolean) = facts.mapValues { (key, fact) ->

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,8 +26,83 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class I8FsDeviceGateTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = instrumentation.targetContext
+
+    @Test
+    fun I8_FS_G02_shellAndFilesystemShareOneExternalStorageAuthority() {
+        withRuntime { runtime ->
+            assertEquals("shizuku", awaitAdmittedFixture(runtime))
+            val target = "/sdcard/Download/droidbridge-i8-shell-${UUID.randomUUID()}.txt"
+            try {
+                assertEquals("", shell("/system/bin/sh -c 'printf shell-shared > $target'"))
+                val inspected = submit(
+                    runtime,
+                    request(
+                        "inspect",
+                        JSONObject()
+                            .put("target", pathTarget(target))
+                            .put("recursive", false)
+                            .put("max_depth", 1)
+                            .put("max_entries", 10),
+                    ),
+                )
+                assertSuccess(inspected)
+                assertEquals("file", inspected.getJSONObject("result").getString("type"))
+
+                val read = submit(
+                    runtime,
+                    request(
+                        "read",
+                        JSONObject()
+                            .put("target", pathTarget(target))
+                            .put("offset", 0)
+                            .put("max_bytes", 64)
+                            .put("encoding", "utf8"),
+                    ),
+                )
+                assertSuccess(read)
+                assertEquals("shell-shared", read.getJSONObject("result").getString("data"))
+
+                assertSuccess(
+                    submit(
+                        runtime,
+                        request(
+                            "manage",
+                            JSONObject()
+                                .put("operation", "delete")
+                                .put("target", pathTarget(target))
+                                .put("recursive", false),
+                        ),
+                    ),
+                )
+                assertEquals(
+                    "absent",
+                    shell("/system/bin/sh -c 'if [ -e $target ]; then printf present; else printf absent; fi'"),
+                )
+                val missing = submit(
+                    runtime,
+                    request(
+                        "inspect",
+                        JSONObject()
+                            .put("target", pathTarget(target))
+                            .put("recursive", false)
+                            .put("max_depth", 1)
+                            .put("max_entries", 10),
+                    ),
+                )
+                assertEquals(missing.toString(), "error", missing.getString("outcome"))
+                assertEquals(
+                    missing.toString(),
+                    "NOT_FOUND",
+                    missing.getJSONObject("error").getString("code"),
+                )
+            } finally {
+                shell("/system/bin/rm -f $target")
+            }
+        }
+    }
 
     @Test
     fun I8_FS_G02_contentResolverInspectAndReadUseTheAdmittedFrameworkExecutor() {
@@ -430,6 +506,10 @@ class I8FsDeviceGateTest {
     private fun assertSuccess(response: JSONObject) {
         assertEquals(response.toString(), "success", response.getString("outcome"))
     }
+
+    private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+        instrumentation.uiAutomation.executeShellCommand(command),
+    ).use { input -> input.readBytes().decodeToString().trim() }
 
     // A freshly installed App runs the runtime before the fixture host and its grants are admitted,
     // and submissions during that window are refused. Every gate for this fixture starts from the

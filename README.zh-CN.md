@@ -46,7 +46,7 @@
 | `visual` | 观察屏幕（截图和界面层级）、点击、长按、滑动、输入文字、按键和组合键 |
 | `android` | 查看应用、启动应用和 Intent、剪贴板、通知 |
 | `filesystem` | 查看、读取、写入、编辑、移动、删除、ZIP 打包解包、下载文件 |
-| `command` | 以应用、Shell（Shizuku）或 Root（Magisk）身份运行命令 |
+| `command` | 以应用、Shell（Shizuku）或 Root（root 模块）身份运行命令 |
 | `network` | DNS、TCP、TLS 诊断；抓包和注入流量（需 Root） |
 | `automation` | 创建、修改、启用、删除按计划运行的自动化 |
 | `task_control` | 列出、查看、取消后台任务 |
@@ -57,7 +57,7 @@
 
 普通手机就能用，给的权限越多，能做的越多：
 
-| | 无 Root | + Shizuku | + Magisk 模块 |
+| | 无 Root | + Shizuku | + Root 模块（Magisk / KernelSU / APatch） |
 |---|---|---|---|
 | 看屏幕 / 点击 / 输入 | 无障碍服务 | ✓（输入：仅 ASCII¹） | ✓ |
 | 截屏 | 屏幕捕获授权 | ✓ | ✓ |
@@ -66,7 +66,7 @@
 | 抓包 / 注入 | — | — | ✓ |
 | 后台保活 | 电池与自启动设置 | 保持到下次重启 | 保持，重启后自动恢复 |
 
-¹ 通过 Shizuku 时，中文、Emoji 等非 ASCII 文字需要无障碍服务或 Magisk 模块。
+¹ 通过 Shizuku 时，中文、Emoji 等非 ASCII 文字需要无障碍服务或 root 模块。
 
 App 内的 **执行环境与权限** 页会逐项引导：每一项都有直达对应系统设置的按钮，已被更强后端覆盖的项目会自动隐藏。
 
@@ -74,12 +74,12 @@ App 内的 **执行环境与权限** 页会逐项引导：每一项都有直达�
 
 - Android 13 到 17，**arm64-v8a** 设备。
 - 连接 ChatGPT：需要支持网页开发者模式的套餐（Plus 及以上），以及在 OpenAI 平台创建的安全隧道和 Runtime API Key。
-- 可选：[Shizuku](https://shizuku.rikka.app/) 或 [Magisk](https://github.com/topjohnwu/Magisk)，用于更高权限档位。
+- 可选：[Shizuku](https://shizuku.rikka.app/)，以及 [Magisk](https://github.com/topjohnwu/Magisk)、[KernelSU](https://github.com/tiann/KernelSU) 或 [APatch](https://github.com/bmax121/APatch)，用于更高权限档位。
 
 ## 安装
 
 1. 在 [Releases](https://github.com/zephyr7030/DroidBridge/releases/latest) 下载 `droidbridge-<版本>-arm64-v8a.apk` 并安装。
-2. *（可选，已 Root 的手机）* 下载 `droidbridge-magisk-<版本>.zip`，在 Magisk 应用中安装模块并重启。
+2. *（可选，已 Root 的手机）* 下载 `droidbridge-magisk-<版本>.zip`，在 Magisk、KernelSU 或 APatch 中安装模块并重启。
 3. 打开卓爱桥，首次启动引导会让你选择智能体类型，并逐项完成权限设置。
 
 每个版本都附带 `SHA256SUMS.txt` 和签名的 `release.json`，App 自身更新时会校验签名。

@@ -10,8 +10,9 @@ use chrono::{DateTime, LocalResult, NaiveDateTime, SecondsFormat, TimeDelta, Tim
 use contract::{
     Automation, AutomationCall, AutomationDeleteInput, AutomationDeleteResult,
     AutomationExecutionSummary, AutomationGetInput, AutomationGetResult, AutomationId,
-    AutomationListInput, AutomationListResult, AutomationSaveInput, AutomationSetEnabledInput,
-    AutomationSummary, AutomationTrigger, ErrorCode, RequestId, True,
+    AutomationListInput, AutomationListResult, AutomationRunInput, AutomationRunResult,
+    AutomationSaveInput, AutomationSetEnabledInput, AutomationSummary, AutomationTrigger,
+    ErrorCode, RequestId, True,
 };
 use domain::{AutomationSlot, DeleteDisposition, DomainError};
 use std::{collections::BTreeMap, str::FromStr};
@@ -78,7 +79,35 @@ where
             })
             .await
         }
+        AutomationCall::Run(input) => {
+            core.retained_mutation(request_id, payload_sha256, now_ms, |state| {
+                request_run(state, input, &timestamp)
+            })
+            .await
+        }
     }
+}
+
+/// Records one run outside the trigger. The scheduler admits it as an ordinary execution, even
+/// for a disabled Automation, and leaves the trigger's due untouched.
+fn request_run(
+    state: &mut RuntimeState,
+    input: AutomationRunInput,
+    timestamp: &str,
+) -> Result<serde_json::Value, DomainError> {
+    let index = visible_index(state, &input.automation_id)?;
+    let record = &mut state.automations[index];
+    if record.active_execution_id.is_some() || record.run_requested_at.is_some() {
+        return Err(DomainError::new(
+            ErrorCode::AlreadyExists,
+            "Automation is already running",
+        ));
+    }
+    record.run_requested_at = Some(timestamp.to_owned());
+    to_value(&AutomationRunResult {
+        automation_id: input.automation_id,
+        run_requested: True,
+    })
 }
 
 fn list(
@@ -171,6 +200,7 @@ fn save(
                 next_due_at,
                 deleted_at: None,
                 active_execution_id: None,
+                run_requested_at: None,
             });
             to_value(&automation)
         }

@@ -5,12 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import com.droidbridge.android.product.update.PackageInstallerResultReceiver
-import com.droidbridge.android.product.update.ReleaseArtifact
-import com.droidbridge.android.product.update.ReleaseConfig
-import com.droidbridge.android.product.update.ReleaseManifests
-import com.droidbridge.android.product.update.ReleaseRejected
-import com.droidbridge.android.product.update.UpdateManager
+import com.droidbridge.android.product.release.ReleaseArtifact
+import com.droidbridge.android.product.release.ReleaseConfig
+import com.droidbridge.android.product.release.ReleaseHash
+import com.droidbridge.android.product.release.ReleaseManifests
+import com.droidbridge.android.product.release.ReleaseRejected
 import java.io.File
 import java.security.MessageDigest
 import java.time.Instant
@@ -371,7 +370,7 @@ internal class UpdateMaintenanceController(
     private fun cachedFile(version: String, name: String) = File(File(cacheRoot, version), name)
 
     private fun matches(file: File, size: Long, sha256: String): Boolean =
-        file.isFile && file.length() == size && UpdateManager.sha256(file) == sha256
+        file.isFile && file.length() == size && ReleaseHash.sha256(file) == sha256
 
     private fun <T> verified(block: () -> T): T = try {
         block()

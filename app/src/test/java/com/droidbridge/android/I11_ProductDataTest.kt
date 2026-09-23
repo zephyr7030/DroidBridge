@@ -1,5 +1,6 @@
 package com.droidbridge.android
 
+import com.droidbridge.android.product.runtime.PublicResult
 import com.droidbridge.android.product.about.ProductInfo
 import com.droidbridge.android.product.diagnostics.DiagnosticsExport
 import com.droidbridge.android.product.diagnostics.FaultFileStatus
@@ -7,12 +8,12 @@ import com.droidbridge.android.product.home.AgentConnectionSummary
 import com.droidbridge.android.product.home.ConnectedAgent
 import com.droidbridge.android.product.home.HomeMcpRow
 import com.droidbridge.android.product.home.HomeProjection
+import com.droidbridge.android.product.home.HomeUsability
 import com.droidbridge.android.product.maintenance.MaintenanceBlocker
 import com.droidbridge.android.product.maintenance.MaintenanceReplies
 import com.droidbridge.android.product.tasks.TaskFilter
 import com.droidbridge.android.product.tasks.TaskPresentation
 import com.droidbridge.android.product.tasks.TaskRepository
-import com.droidbridge.android.product.tasks.TaskResult
 import com.droidbridge.android.product.tasks.TaskSnapshot
 import java.io.File
 import java.nio.file.Files
@@ -36,7 +37,6 @@ import org.junit.Test
 class I11_ProductDataTest {
     @Test
     fun I11_G02_taskFiltersMapExactlyToCanonicalStateSets() = runBlocking {
-        assertNull(TaskFilter.All.states)
         assertEquals(listOf("created", "queued", "running"), TaskFilter.Active.states)
         assertEquals(listOf("completed", "failed", "cancelled", "interrupted"), TaskFilter.Completed.states)
 
@@ -48,9 +48,10 @@ class I11_ProductDataTest {
             ]}}""".encodeToByteArray()
         }, requestIds = { "99500000-0000-4000-8000-000000000001" })
 
-        val listed = repository.list(TaskFilter.All) as TaskResult.Success
+        val listed = repository.list(TaskFilter.Completed) as PublicResult.Success
         assertEquals("t1", listed.value.single().taskId)
-        assertFalse(Json.parseToJsonElement(sent[0]).jsonObject.getValue("payload").jsonObject.getValue("input").jsonObject.containsKey("states"))
+        val ended = Json.parseToJsonElement(sent[0]).jsonObject.getValue("payload").jsonObject.getValue("input").jsonObject
+        assertEquals(TaskFilter.Completed.states, ended.getValue("states").jsonArray.map { it.jsonPrimitive.content })
 
         repository.list(TaskFilter.Active, limit = 500)
         val input = Json.parseToJsonElement(sent[1]).jsonObject.getValue("payload").jsonObject.getValue("input").jsonObject
@@ -78,7 +79,7 @@ class I11_ProductDataTest {
                 "result":{"exit_code":0,"stdout_ref":"dbref:stdout:a","image_ref":"dbref:image:b","stderr":"","data_ref":null}
             }}""".encodeToByteArray()
         })
-        val fetched = (repository.get("t2") as TaskResult.Success).value
+        val fetched = (repository.get("t2") as PublicResult.Success).value
         assertEquals("app", fetched.executionClass)
         assertEquals(listOf("dbref:stdout:a", "dbref:image:b"), TaskPresentation.outputRefs(fetched.result))
         assertEquals(
@@ -99,9 +100,9 @@ class I11_ProductDataTest {
         val failing = TaskRepository(submit = {
             """{"protocol_version":1,"request_id":"r","outcome":"error","error":{"code":"NOT_FOUND","operation":"task_control.get","retryable":false}}""".encodeToByteArray()
         })
-        assertEquals("NOT_FOUND", (failing.get("t9") as TaskResult.Failure).error.code)
+        assertEquals("NOT_FOUND", (failing.get("t9") as PublicResult.Failure).error.code)
         val unavailable = TaskRepository(submit = { error("unbound") })
-        assertEquals("RUNTIME_UNAVAILABLE", (unavailable.cancel("t9") as TaskResult.Failure).error.code)
+        assertEquals("RUNTIME_UNAVAILABLE", (unavailable.cancel("t9") as PublicResult.Failure).error.code)
     }
 
     @Test
@@ -139,6 +140,20 @@ class I11_ProductDataTest {
         // A failed read hides nothing that was read, and only states unreadable when nothing is known up.
         assertEquals(AgentConnectionSummary(listOf(ConnectedAgent.ChatGpt), unreadable = false), HomeProjection.agentConnections(HomeMcpRow.Off, true, true))
         assertEquals(AgentConnectionSummary(emptyList(), unreadable = true), HomeProjection.agentConnections(HomeMcpRow.Off, false, true))
+    }
+
+    @Test
+    fun homeReadsAsUsableOnlyWhenAnAgentCanUseThePhoneNow() {
+        val connected = AgentConnectionSummary(listOf(ConnectedAgent.LocalMcp), unreadable = false)
+        val none = AgentConnectionSummary(emptyList(), unreadable = false)
+        val unread = AgentConnectionSummary(emptyList(), unreadable = true)
+        assertEquals(HomeUsability.Usable, HomeProjection.usability(connected, attention = 0, checking = false))
+        // A running Runtime that no agent reaches is not usable, whatever else is set up.
+        assertEquals(HomeUsability.NoAgentConnected, HomeProjection.usability(none, attention = 3, checking = true))
+        assertEquals(HomeUsability.NeedsAttention, HomeProjection.usability(connected, attention = 1, checking = true))
+        // Nothing waits on the user, but a fact is still being read: not yet usable.
+        assertEquals(HomeUsability.Checking, HomeProjection.usability(connected, attention = 0, checking = true))
+        assertEquals(HomeUsability.Checking, HomeProjection.usability(unread, attention = 0, checking = false))
     }
 
     @Test

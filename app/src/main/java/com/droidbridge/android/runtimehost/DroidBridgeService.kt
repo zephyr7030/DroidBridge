@@ -8,14 +8,18 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Binder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.RemoteCallbackList
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.droidbridge.android.DroidBridgeApplication
 import com.droidbridge.android.R
 import com.droidbridge.android.execution.shizuku.ShizukuController
 import com.droidbridge.android.execution.android.AccessibilityServiceStartupFact
 import com.droidbridge.android.execution.android.MediaProjectionVisualController
+import com.droidbridge.android.execution.android.NativeAndroidExecutionDispatcher
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +40,9 @@ class DroidBridgeService : Service() {
     private lateinit var mediaProjection: MediaProjectionVisualController
     private lateinit var mcpSettings: McpSettingsController
     private lateinit var tunnelSettings: TunnelSettingsController
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var activeTaskCount = 0L
+    @Volatile private var latestStartId = 0
 
     private data class PendingRequest(
         val callback: AtomicReference<IRuntimeCallback?>,
@@ -228,7 +235,12 @@ class DroidBridgeService : Service() {
         mcpSettings = graph.mcpSettings
         tunnelSettings = graph.tunnelSettings
         hostController.setHintSink(::publishHint)
-        foregroundReasons = ForegroundReasonRegistry(this)
+        foregroundReasons = ForegroundReasonRegistry(
+            service = this,
+            taskCount = { activeTaskCount },
+            onEmpty = ::stopStartedIfIdle,
+        )
+        graph.setTaskActivitySink(::setTaskActivity)
         graph.setNetworkDefaultForegroundSink { active ->
             foregroundReasons.set(ForegroundReason.SpecialUse, active)
         }
@@ -274,8 +286,10 @@ class DroidBridgeService : Service() {
     override fun onUnbind(intent: Intent?): Boolean = true
 
     /**
-     * Only the default-process client bind restarts an enabled listener (S-MCP-004); broadcast
-     * keeper starts and NotificationListener binds never do, so boot alone never starts MCP.
+     * Only the default-process client bind restarts an enabled listener from a bind (S-MCP-004);
+     * broadcast keeper starts and NotificationListener binds never do. The root module's keep-alive
+     * wake is the only other caller, and it asks only for a listener it saw this device run, so
+     * boot alone still never starts MCP.
      */
     private fun restoreMcpForUi(intent: Intent?) {
         if (intent?.action != ACTION_UI_BIND) return
@@ -292,7 +306,7 @@ class DroidBridgeService : Service() {
     }
 
     /**
-     * The Magisk module starts this service as a foreground service when an enabled connection
+     * The root module starts this service as a foreground service when an enabled connection
      * has no Runtime answering it, so the service enters the foreground once to honor that start
      * and then keeps only the reasons its restored connections hold.
      */
@@ -304,6 +318,9 @@ class DroidBridgeService : Service() {
             return
         }
         tunnelSettings.restore(::setTunnelForeground)
+        // The daemon sends this for an enabled listener only once it has seen this device run one,
+        // so restoring it here returns a listener the system ended; a boot still never opens one.
+        mcpSettings.restore(::setMcpForeground)
         foregroundReasons.set(ForegroundReason.SpecialUse, false, KEEPALIVE_WAKE_OWNER)
     }
 
@@ -312,10 +329,83 @@ class DroidBridgeService : Service() {
         foregroundReasons.set(ForegroundReason.SpecialUse, active, TUNNEL_FOREGROUND_OWNER)
     }
 
+    private fun setTaskActivity(activeTasks: Long) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { setTaskActivity(activeTasks) }
+            return
+        }
+        val wasActive = activeTaskCount > 0
+        activeTaskCount = activeTasks
+        // A platform that refuses the start leaves the Tasks running without the hold, which is the
+        // host fault the other wake paths already report; it never takes the Runtime process down.
+        try {
+            if (activeTasks > 0 && !wasActive) {
+                ContextCompat.startForegroundService(this, Intent(this, DroidBridgeService::class.java))
+            }
+            foregroundReasons.set(ForegroundReason.Task, activeTasks > 0, TASK_FOREGROUND_OWNER)
+        } catch (_: RuntimeException) {
+            NativeRuntime.nativeRecordHostFault("FGS_START_REJECTED", TASK_FOREGROUND_OWNER)
+        }
+    }
+
+    /**
+     * The root module's daemon hosts the canonical Runtime, and this process serves the Android
+     * primitives its Tasks execute. Its published count therefore holds this service in the
+     * foreground exactly as an App-hosted Runtime's own count does. A start that carries no
+     * readable count leaves no reason behind, so `onStartCommand` releases the start it made.
+     */
+    private fun daemonTaskActivity(intent: Intent) {
+        val epoch = intent.getStringExtra(EXTRA_RUNTIME_EPOCH).orEmpty()
+        val activeTasks = intent.getIntExtra(EXTRA_ACTIVE_TASKS, -1)
+        val revision = intent.getLongExtra(EXTRA_CANONICAL_REVISION, -1L)
+        if (epoch.isEmpty() || activeTasks < 0 || revision < 0) return
+        NativeAndroidExecutionDispatcher.daemonTaskActivityChanged(
+            epoch,
+            activeTasks.toLong(),
+            revision,
+        )
+    }
+
+    private fun automationWake(phase: String) {
+        try {
+            foregroundReasons.set(
+                ForegroundReason.SpecialUse,
+                true,
+                AUTOMATION_WAKE_OWNER,
+            )
+        } catch (_: RuntimeException) {
+            NativeRuntime.nativeRecordHostFault("FGS_START_REJECTED", phase)
+            return
+        }
+        scope.launch {
+            try {
+                if (!hostController.wakeAutomation()) {
+                    NativeRuntime.nativeRecordHostFault("RUNTIME_UNAVAILABLE", phase)
+                }
+            } finally {
+                foregroundReasons.set(
+                    ForegroundReason.SpecialUse,
+                    false,
+                    AUTOMATION_WAKE_OWNER,
+                )
+            }
+        }
+    }
+
+    private fun stopStartedIfIdle() {
+        val startId = latestStartId
+        if (startId > 0 && stopSelfResult(startId)) latestStartId = 0
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         hostController.start()
         when (intent?.action) {
             ACTION_KEEPALIVE_WAKE -> keepAliveWake()
+            ACTION_TASK_ACTIVITY -> daemonTaskActivity(intent)
+            ACTION_AUTOMATION_WAKE -> automationWake(
+                intent.getStringExtra(EXTRA_AUTOMATION_PHASE) ?: "automation_wake",
+            )
             ACTION_MEDIA_PROJECTION_STOP -> {
                 mediaProjection.stop()
                 publishHint(PROJECTION_CONTEXT)
@@ -333,7 +423,12 @@ class DroidBridgeService : Service() {
                 publishHint(PROJECTION_CONTEXT)
             }
         }
-        return if (foregroundReasons.hasPersistentReason()) START_STICKY else START_NOT_STICKY
+        return if (foregroundReasons.hasPersistentReason()) {
+            START_STICKY
+        } else {
+            stopStartedIfIdle()
+            START_NOT_STICKY
+        }
     }
 
     override fun onDestroy() {
@@ -344,8 +439,10 @@ class DroidBridgeService : Service() {
         tunnelSettings.suspendRuntime(::setTunnelForeground)
         mediaProjection.stop()
         shizukuController.stop()
-        (application as DroidBridgeApplication).requireRuntimeGraph()
-            .setNetworkDefaultForegroundSink(null)
+        (application as DroidBridgeApplication).requireRuntimeGraph().let { graph ->
+            graph.setNetworkDefaultForegroundSink(null)
+            graph.setTaskActivitySink(null)
+        }
         scope.cancel()
         foregroundReasons.clear()
         hostController.setGuardScopeSink(null)
@@ -392,11 +489,20 @@ class DroidBridgeService : Service() {
         const val ACTION_MEDIA_PROJECTION_CONSENT = "com.droidbridge.android.action.MEDIA_PROJECTION_CONSENT"
         const val ACTION_MEDIA_PROJECTION_STOP = "com.droidbridge.android.action.MEDIA_PROJECTION_STOP"
         const val ACTION_UI_BIND = "com.droidbridge.android.action.UI_BIND"
-        /** Sent by the Magisk module's daemon (`app_keepalive.rs`); both sides spell it identically. */
+        /** Sent by the root module's daemon (`app_keepalive.rs`); both sides spell it identically. */
         const val ACTION_KEEPALIVE_WAKE = "com.droidbridge.android.action.KEEPALIVE_WAKE"
+        /** Sent by the root module's daemon (`app_keepalive.rs`); both sides spell it identically. */
+        const val ACTION_TASK_ACTIVITY = "com.droidbridge.android.action.TASK_ACTIVITY"
+        const val EXTRA_RUNTIME_EPOCH = "runtime_epoch"
+        const val EXTRA_ACTIVE_TASKS = "active_tasks"
+        const val EXTRA_CANONICAL_REVISION = "canonical_revision"
+        const val ACTION_AUTOMATION_WAKE = "com.droidbridge.android.action.AUTOMATION_WAKE"
+        const val EXTRA_AUTOMATION_PHASE = "automation_phase"
         private const val KEEPALIVE_WAKE_OWNER = "keepalive_wake"
         private const val MCP_FOREGROUND_OWNER = "mcp"
         private const val TUNNEL_FOREGROUND_OWNER = "tunnel"
+        private const val TASK_FOREGROUND_OWNER = "task"
+        private const val AUTOMATION_WAKE_OWNER = "automation_wake"
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
         private const val PROJECTION_CONTEXT = "context.status"
@@ -415,11 +521,14 @@ class DroidBridgeService : Service() {
 
 enum class ForegroundReason {
     SpecialUse,
+    Task,
     MediaProjection,
 }
 
 internal class ForegroundReasonRegistry(
     private val service: Service,
+    private val taskCount: () -> Long = { 0 },
+    private val onEmpty: () -> Unit = {},
 ) {
     /** Each type stays in the mask while any logical owner still needs it. */
     private val owners = linkedMapOf<ForegroundReason, MutableSet<String>>()
@@ -448,6 +557,7 @@ internal class ForegroundReasonRegistry(
     private fun apply() {
         if (active.isEmpty()) {
             service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            onEmpty()
             return
         }
         val manager = service.getSystemService(NotificationManager::class.java)
@@ -457,25 +567,33 @@ internal class ForegroundReasonRegistry(
         manager.createNotificationChannel(
             NotificationChannel(TASK_CHANNEL, service.getString(R.string.nav_tasks), NotificationManager.IMPORTANCE_LOW),
         )
-        val notification: Notification = NotificationCompat.Builder(service, RUNTIME_CHANNEL)
+        val taskOnly = active == setOf(ForegroundReason.Task)
+        val notification: Notification = NotificationCompat.Builder(
+            service,
+            if (taskOnly) TASK_CHANNEL else RUNTIME_CHANNEL,
+        )
             .setSmallIcon(R.drawable.ic_stat_droidbridge)
             .setContentTitle(
                 service.getString(
                     if (ForegroundReason.MediaProjection in active) {
                         R.string.notification_screen_capture_title
+                    } else if (taskOnly) {
+                        R.string.nav_tasks
                     } else {
                         R.string.cap_runtime_title
                     },
                 ),
             )
             .setContentText(
-                service.getString(
-                    if (ForegroundReason.MediaProjection in active) {
-                        R.string.notification_screen_capture_body
-                    } else {
-                        R.string.mcp_state_running
-                    },
-                ),
+                when {
+                    ForegroundReason.MediaProjection in active ->
+                        service.getString(R.string.notification_screen_capture_body)
+                    taskOnly -> service.getString(
+                        R.string.notification_tasks_body,
+                        taskCount(),
+                    )
+                    else -> service.getString(R.string.mcp_state_running)
+                },
             )
             .setOngoing(true)
             .apply {
@@ -515,6 +633,7 @@ internal class ForegroundReasonRegistry(
     private fun typeMask(): Int = active.fold(0) { mask, reason ->
         mask or when (reason) {
             ForegroundReason.SpecialUse -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ForegroundReason.Task -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             ForegroundReason.MediaProjection -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         }
     }

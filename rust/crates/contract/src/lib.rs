@@ -3,7 +3,6 @@
 mod artifacts;
 mod automation;
 mod common;
-mod descriptor;
 mod envelope;
 mod internal;
 mod results;
@@ -12,7 +11,6 @@ mod tools;
 pub use artifacts::*;
 pub use automation::*;
 pub use common::*;
-pub use descriptor::*;
 pub use envelope::*;
 pub use internal::*;
 pub use results::*;

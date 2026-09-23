@@ -10,8 +10,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.droidbridge.android.product.tasks.TaskRepository
 import com.droidbridge.android.ui.tasks.TaskDetailRoute
 import com.droidbridge.android.ui.tasks.TaskDetailViewModel
-import com.droidbridge.android.ui.tasks.TaskListViewModel
-import com.droidbridge.android.ui.tasks.TasksRoute
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Rule
 import org.junit.Test
@@ -25,25 +23,6 @@ import org.junit.runner.RunWith
 class I11DeviceGateTest {
     @get:Rule
     val compose = createComposeRule()
-
-    @Test
-    fun I11_G01_tasksRouteShowsTheCommonErrorRetryAndEmptyStates() {
-        val reply = AtomicReference<String?>(null)
-        val repository = TaskRepository(submit = { reply.get()?.encodeToByteArray() ?: error("Runtime unbound") })
-        val viewModel = TaskListViewModel(repository)
-        compose.setContent { MaterialTheme { TasksRoute(viewModel) { } } }
-
-        awaitTag("tasks:error")
-        compose.onNodeWithTag("tasks:filter:active").assertIsSelected()
-
-        reply.set("""{"protocol_version":1,"request_id":"r","outcome":"success","result":{"tasks":[]}}""")
-        compose.onNodeWithTag("tasks:retry").performClick()
-        awaitTag("tasks:empty")
-
-        compose.onNodeWithTag("tasks:filter:all").performClick()
-        awaitTag("tasks:empty")
-        compose.onNodeWithTag("tasks:filter:all").assertIsSelected()
-    }
 
     @Test
     fun I11_G02_taskDetailCancelFollowsTheCanonicalSnapshot() {

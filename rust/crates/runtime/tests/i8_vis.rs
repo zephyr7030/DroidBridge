@@ -143,7 +143,6 @@ struct PortState {
     interactions: Vec<VisualInteractionRequest>,
     transform_sources: Vec<&'static str>,
     stale_interaction: bool,
-    stale_node_interaction: bool,
     fatal_hierarchy: bool,
 }
 
@@ -157,7 +156,6 @@ impl Default for FixtureVisualPort {
                 interactions: Vec::new(),
                 transform_sources: Vec::new(),
                 stale_interaction: false,
-                stale_node_interaction: false,
                 fatal_hierarchy: false,
             })),
         }
@@ -181,9 +179,8 @@ impl FixtureVisualPort {
         self.state.lock().unwrap().stale_interaction = true;
     }
 
-    /// The platform's scene check rejects a node target whose scene moved; a coordinate carries no scene.
-    fn fail_node_scene_proof(&self) {
-        self.state.lock().unwrap().stale_node_interaction = true;
+    fn change_scene(&self) {
+        self.state.lock().unwrap().stale_interaction = true;
     }
 
     fn fail_hierarchy_without_cleanup_proof(&self) {
@@ -334,10 +331,7 @@ impl VisualPrimitivePort for FixtureVisualPort {
         _claim: &LocalExecutionClaim,
     ) -> Result<(), ExecutionFailure> {
         let mut state = self.state.lock().unwrap();
-        if state.stale_interaction
-            || (state.stale_node_interaction
-                && matches!(request, VisualInteractionRequest::Node { .. }))
-        {
+        if state.stale_interaction {
             return Err(ExecutionFailure {
                 error: DomainError::new(ErrorCode::StaleReference, "scene proof changed"),
                 cleanup_verified: true,
@@ -434,13 +428,13 @@ async fn i8_vis_g01_observe_freezes_display_and_each_selected_source_before_side
     assert_eq!(response["outcome"], "success", "{response}");
     assert_eq!(response["result"]["display"]["width"], 1080);
     assert_eq!(response["result"]["image_format"], "png");
-    assert_eq!(response["result"]["nodes"][0].get("node_ref"), None);
+    assert!(response["result"]["nodes"][0].get("node_ref").is_some());
     assert_eq!(
         primitive.providers(),
         vec![
             runtime::ProviderToken::AppFramework,
             runtime::ProviderToken::Shizuku,
-            runtime::ProviderToken::Shizuku,
+            runtime::ProviderToken::Accessibility,
         ],
     );
 }
@@ -465,8 +459,8 @@ async fn i8_vis_g06_changed_display_discards_parts_without_recapture_or_mixed_pu
 }
 
 #[tokio::test]
-async fn i8_vis_g08_privileged_xml_reports_nodes_without_identity_and_coordinates_need_no_proof() {
-    let (core, primitive) = core(CapabilityState::Available, CapabilityState::Available);
+async fn i8_vis_g08_privileged_xml_reports_nodes_without_identity_and_validates_scene_proof() {
+    let (core, primitive) = core(CapabilityState::Available, CapabilityState::Unavailable);
     let observed = submit(&core, 3, observe_payload(), NOW_MS).await;
     let observation_id = observed["result"]["observation_id"].as_str().unwrap();
     assert!(observed["result"]["nodes"][0].get("node_ref").is_none());
@@ -484,6 +478,33 @@ async fn i8_vis_g08_privileged_xml_reports_nodes_without_identity_and_coordinate
     assert_eq!(interacted["outcome"], "success", "{interacted}");
     assert_eq!(interacted["result"]["target"], "coordinate");
     assert_eq!(primitive.interactions().len(), 1);
+}
+
+#[tokio::test]
+async fn i8_vis_an_observation_right_after_input_lets_the_screen_start_answering_it() {
+    let (core, _) = core(CapabilityState::Available, CapabilityState::Unavailable);
+    // With no input delivered, an observation starts at once.
+    let started = std::time::Instant::now();
+    let observed = submit(&core, 5, observe_payload(), NOW_MS).await;
+    assert!(started.elapsed() < std::time::Duration::from_millis(200));
+    let observation_id = observed["result"]["observation_id"].as_str().unwrap();
+    let interacted = submit(
+        &core,
+        6,
+        serde_json::json!({
+            "tool": "visual",
+            "action": "interact",
+            "input": {"operation":"tap","target":"coordinate","observation_id":observation_id,"x":10,"y":20}
+        }),
+        NOW_MS + 1,
+    )
+    .await;
+    assert_eq!(interacted["outcome"], "success", "{interacted}");
+    // Immediately after it, the observation waits for the screen to begin its change.
+    let tapped = std::time::Instant::now();
+    let after = submit(&core, 7, observe_payload(), NOW_MS + 2).await;
+    assert_eq!(after["outcome"], "success", "{after}");
+    assert!(tapped.elapsed() >= std::time::Duration::from_millis(250));
 }
 
 #[tokio::test]
@@ -559,15 +580,12 @@ async fn i8_vis_g07_expired_observation_never_retargets_coordinate_input() {
 }
 
 #[tokio::test]
-async fn i8_vis_g07_changed_scene_keeps_coordinate_targets_and_rejects_node_targets() {
-    // A page that repaints between observation and interaction (DroidBridge's own screens do: every call
-    // rewrites their call-time rows) leaves coordinate targets usable, because a coordinate means a place
-    // on the display, while a node target means a place in the scene and must be refused when it moved.
+async fn i8_vis_g07_changed_scene_rejects_coordinate_and_node_targets() {
     let (core, primitive) = core(CapabilityState::Unavailable, CapabilityState::Available);
     let observed = submit(&core, 12, observe_payload(), NOW_MS).await;
     let observation_id = observed["result"]["observation_id"].as_str().unwrap();
     let node_ref = observed["result"]["nodes"][0]["node_ref"].as_str().unwrap();
-    primitive.fail_node_scene_proof();
+    primitive.change_scene();
     let coordinate = submit(
         &core,
         13,
@@ -578,7 +596,8 @@ async fn i8_vis_g07_changed_scene_keeps_coordinate_targets_and_rejects_node_targ
         NOW_MS + 1,
     )
     .await;
-    assert_eq!(coordinate["outcome"], "success", "{coordinate}");
+    assert_eq!(coordinate["outcome"], "error", "{coordinate}");
+    assert_eq!(coordinate["error"]["code"], "STALE_REFERENCE");
     let node = submit(
         &core,
         14,
@@ -591,17 +610,22 @@ async fn i8_vis_g07_changed_scene_keeps_coordinate_targets_and_rejects_node_targ
     .await;
     assert_eq!(node["outcome"], "error");
     assert_eq!(node["error"]["code"], "STALE_REFERENCE");
-    assert_eq!(primitive.interactions().len(), 1);
+    assert!(primitive.interactions().is_empty());
 }
 
 #[tokio::test]
 async fn i8_vis_g09_observe_states_what_its_observation_can_address() {
-    let (accessibility_core, _primitive) = core(CapabilityState::Unavailable, CapabilityState::Available);
+    let (accessibility_core, _primitive) =
+        core(CapabilityState::Unavailable, CapabilityState::Available);
     let observed = submit(&accessibility_core, 15, observe_payload(), NOW_MS).await;
     assert_eq!(observed["result"]["interact"]["coordinate"], true);
     assert_eq!(observed["result"]["interact"]["ttl_ms"], 300_000);
     assert!(observed["result"]["nodes"][0].get("node_ref").is_some());
-    assert!(observed["result"]["interact"].get("node_unavailable_reason").is_none());
+    assert!(
+        observed["result"]["interact"]
+            .get("node_unavailable_reason")
+            .is_none()
+    );
 
     let (privileged, _primitive) = core(CapabilityState::Available, CapabilityState::Unavailable);
     let privileged = submit(&privileged, 16, observe_payload(), NOW_MS).await;

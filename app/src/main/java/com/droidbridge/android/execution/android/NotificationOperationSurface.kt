@@ -16,6 +16,33 @@ internal data class NotificationActionFact(
     val requiresRemoteInput: Boolean,
 )
 
+internal const val MAX_ACTIVE_NOTIFICATIONS = 256
+internal const val MAX_NOTIFICATION_KEY_BYTES = 2_048
+internal const val MAX_NOTIFICATION_TITLE_BYTES = 256
+internal const val MAX_NOTIFICATION_TEXT_BYTES = 512
+internal const val MAX_NOTIFICATION_ACTIONS = 32
+internal const val MAX_NOTIFICATION_ACTION_TITLE_BYTES = 512
+
+internal fun boundedUtf8(value: String?, maxBytes: Int): String? {
+    value ?: return null
+    if (value.encodeToByteArray().size <= maxBytes) return value
+    var index = 0
+    var bytes = 0
+    while (index < value.length) {
+        val codePoint = value.codePointAt(index)
+        val encoded = when {
+            codePoint <= 0x7f -> 1
+            codePoint <= 0x7ff -> 2
+            codePoint <= 0xffff -> 3
+            else -> 4
+        }
+        if (bytes + encoded > maxBytes) break
+        bytes += encoded
+        index += Character.charCount(codePoint)
+    }
+    return value.substring(0, index)
+}
+
 /** One platform notification exactly as a listener callback delivered it. */
 internal class ObservedNotification<Handle>(
     val key: String,
@@ -23,6 +50,7 @@ internal class ObservedNotification<Handle>(
     val postedAtMillis: Long,
     val title: String?,
     val text: String?,
+    val actionCount: Int,
     val actions: List<NotificationActionFact>,
     val handle: Handle,
 )
@@ -46,17 +74,29 @@ internal class NotificationOperationSurface<Handle>(
     private class Entry<Handle>(val generation: Long, val notification: ObservedNotification<Handle>)
 
     private val entries = LinkedHashMap<String, Entry<Handle>>()
+    private var nextGeneration = 1L
 
     @Synchronized
     fun connected(active: List<ObservedNotification<Handle>>) {
         entries.clear()
-        active.forEach { entries[it.key] = Entry(1, it) }
+        active.asSequence()
+            .mapNotNull(::normalized)
+            .sortedWith(compareByDescending<ObservedNotification<Handle>> { it.postedAtMillis }.thenBy { it.key })
+            .take(MAX_ACTIVE_NOTIFICATIONS)
+            .forEach { entries[it.key] = Entry(allocateGeneration(), it) }
     }
 
     @Synchronized
     fun posted(notification: ObservedNotification<Handle>) {
-        val generation = (entries[notification.key]?.generation ?: 0L) + 1L
-        entries[notification.key] = Entry(generation, notification)
+        val admitted = normalized(notification) ?: return
+        entries[admitted.key] = Entry(allocateGeneration(), admitted)
+        if (entries.size > MAX_ACTIVE_NOTIFICATIONS) {
+            val oldest = entries.values.minWithOrNull(
+                compareBy<Entry<Handle>> { it.notification.postedAtMillis }
+                    .thenByDescending { it.notification.key },
+            )
+            oldest?.let { entries.remove(it.notification.key) }
+        }
     }
 
     @Synchronized
@@ -101,7 +141,9 @@ internal class NotificationOperationSurface<Handle>(
     private fun snapshot(): AndroidExecutionResult {
         val encoded = buildJsonObject {
             put("notifications", buildJsonArray {
-                entries.values.forEach { entry ->
+                entries.values
+                    .sortedWith(compareByDescending<Entry<Handle>> { it.notification.postedAtMillis }.thenBy { it.notification.key })
+                    .forEach { entry ->
                     val notification = entry.notification
                     add(buildJsonObject {
                         put("key", notification.key)
@@ -110,6 +152,7 @@ internal class NotificationOperationSurface<Handle>(
                         if (notification.postedAtMillis > 0) put("posted_at_ms", notification.postedAtMillis)
                         notification.title?.let { put("title", it) }
                         notification.text?.let { put("text", it) }
+                        put("action_count", notification.actionCount)
                         put("actions", buildJsonArray {
                             notification.actions.forEach { action ->
                                 add(buildJsonObject {
@@ -148,6 +191,39 @@ internal class NotificationOperationSurface<Handle>(
             throw AndroidExecutionException(STALE_REFERENCE)
         }
         return entry.notification
+    }
+
+    private fun normalized(notification: ObservedNotification<Handle>): ObservedNotification<Handle>? {
+        if (notification.key.isEmpty() ||
+            notification.key.encodeToByteArray().size > MAX_NOTIFICATION_KEY_BYTES ||
+            notification.packageName.isEmpty() ||
+            notification.packageName.encodeToByteArray().size > 255
+        ) {
+            return null
+        }
+        return ObservedNotification(
+            key = notification.key,
+            packageName = notification.packageName,
+            postedAtMillis = notification.postedAtMillis,
+            title = boundedUtf8(notification.title, MAX_NOTIFICATION_TITLE_BYTES),
+            text = boundedUtf8(notification.text, MAX_NOTIFICATION_TEXT_BYTES),
+            actionCount = notification.actionCount.coerceAtLeast(notification.actions.size),
+            actions = notification.actions.take(MAX_NOTIFICATION_ACTIONS + 1).map { action ->
+                NotificationActionFact(
+                    title = boundedUtf8(action.title, MAX_NOTIFICATION_ACTION_TITLE_BYTES),
+                    requiresRemoteInput = action.requiresRemoteInput,
+                )
+            },
+            handle = notification.handle,
+        )
+    }
+
+    private fun allocateGeneration(): Long {
+        if (nextGeneration == Long.MAX_VALUE) {
+            entries.clear()
+            throw AndroidExecutionException("RESOURCE_LIMIT")
+        }
+        return nextGeneration++
     }
 
     private fun completed() = AndroidExecutionResult(COMPLETED)

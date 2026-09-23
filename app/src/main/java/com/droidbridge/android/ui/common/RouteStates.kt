@@ -1,5 +1,6 @@
 package com.droidbridge.android.ui.common
 
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -100,4 +101,10 @@ object ReasonText {
         "CLEANUP_UNVERIFIED" -> R.string.reason_cleanup_unverified
         else -> R.string.state_error
     }
+}
+
+/** The leading icon of a list row; the row's text already names it. */
+@Composable
+fun RowIcon(@DrawableRes icon: Int, modifier: Modifier = Modifier) {
+    Icon(painterResource(icon), contentDescription = null, modifier = modifier)
 }

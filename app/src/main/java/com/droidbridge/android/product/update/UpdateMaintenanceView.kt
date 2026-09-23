@@ -1,5 +1,6 @@
 package com.droidbridge.android.product.update
 
+import com.droidbridge.android.product.release.ModulePresence
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject

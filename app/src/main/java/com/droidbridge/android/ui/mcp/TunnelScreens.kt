@@ -50,6 +50,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.droidbridge.android.R
+import com.droidbridge.android.ui.common.RowIcon
 import com.droidbridge.android.client.ClientState
 import com.droidbridge.android.client.DroidBridgeClient
 import com.droidbridge.android.product.mcp.CHATGPT_APPS_SETTINGS_URL
@@ -133,6 +134,9 @@ class TunnelViewModel(private val client: DroidBridgeClient) : ViewModel() {
 
     fun setEnabled(enabled: Boolean) = mutate { client.setTunnelEnabled(enabled) }
 
+    /** A notification decision changes a grant the Runtime reports, so it is read again. */
+    fun notificationsDecided() = client.recheck()
+
     fun clear(complete: (Boolean) -> Unit = {}) = mutate(complete = complete) { client.clearTunnel() }
 
     private fun mutate(
@@ -165,6 +169,7 @@ fun TunnelRoute(
     notificationsUnavailable: Boolean,
     shouldRequestNotifications: () -> Boolean,
     done: () -> Unit,
+    finishSetup: (() -> Unit)?,
     back: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -185,6 +190,7 @@ fun TunnelRoute(
         }
     }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.notificationsDecided()
         pendingConnect?.let { (id, key) -> connect(id, key) } ?: viewModel.setEnabled(true)
         pendingConnect = null
     }
@@ -212,12 +218,15 @@ fun TunnelRoute(
             )
         },
         bottomBar = {
+            // First setup ends here whether or not ChatGPT is configured yet; it can be done later.
             Button(
-                onClick = done,
-                enabled = doneEnabled,
+                onClick = finishSetup ?: done,
+                enabled = finishSetup != null || doneEnabled,
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp).heightIn(min = 56.dp)
                     .testTag("tunnel:done"),
-            ) { Text(stringResource(R.string.action_done)) }
+            ) {
+                Text(stringResource(if (finishSetup != null) R.string.action_finish_setup else R.string.action_done))
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -227,6 +236,7 @@ fun TunnelRoute(
             item {
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.tunnel_intro_title)) },
+                    leadingContent = { RowIcon(R.drawable.ic_info) },
                     supportingContent = { Text(stringResource(R.string.tunnel_intro_body)) },
                     modifier = Modifier.testTag("tunnel:intro"),
                 )
@@ -323,6 +333,7 @@ fun TunnelRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.tunnel_enable)) },
+                        leadingContent = { RowIcon(R.drawable.ic_power) },
                         supportingContent = { Text(settings.tunnelId.orEmpty()) },
                         trailingContent = {
                             Switch(
@@ -343,6 +354,7 @@ fun TunnelRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.tunnel_runtime_state)) },
+                        leadingContent = { RowIcon(R.drawable.ic_monitor_heart) },
                         supportingContent = {
                             Column {
                                 Text(stringResource(tunnelStateLabel(settings)))
@@ -368,6 +380,7 @@ fun TunnelRoute(
                     item {
                         ListItem(
                             headlineContent = { Text(stringResource(R.string.warning_notification_visibility_limited)) },
+                            leadingContent = { RowIcon(R.drawable.ic_notifications_off) },
                             modifier = Modifier.testTag("tunnel:notification_warning"),
                         )
                     }
@@ -398,6 +411,7 @@ fun TunnelRoute(
                 item {
                     TunnelStatusRow(
                         R.string.tunnel_status_runtime,
+                        R.drawable.ic_monitor_heart,
                         if (runtimeReady) R.string.state_ready else R.string.state_starting,
                         "tunnel:status:runtime",
                     )
@@ -405,6 +419,7 @@ fun TunnelRoute(
                 item {
                     TunnelStatusRow(
                         R.string.tunnel_status_openai,
+                        R.drawable.ic_cloud,
                         tunnelReadinessLabel(settings),
                         "tunnel:status:openai",
                         tunnelReason(settings.reason),
@@ -446,6 +461,7 @@ fun TunnelRoute(
                     item {
                         CopyValueRow(
                             title = R.string.tunnel_plugin_name,
+                            icon = R.drawable.ic_extension,
                             value = TUNNEL_PLUGIN_NAME,
                             tag = "tunnel:copy_plugin_name",
                         ) { context.copyText(TUNNEL_PLUGIN_NAME) }
@@ -453,6 +469,7 @@ fun TunnelRoute(
                     item {
                         ListItem(
                             headlineContent = { Text(stringResource(R.string.tunnel_id)) },
+                            leadingContent = { RowIcon(R.drawable.ic_badge) },
                             supportingContent = { Text(settings.tunnelId.orEmpty()) },
                             modifier = Modifier.testTag("tunnel:plugin_tunnel_id"),
                         )
@@ -461,6 +478,7 @@ fun TunnelRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.tunnel_first_call_title)) },
+                        leadingContent = { RowIcon(R.drawable.ic_chat) },
                         supportingContent = {
                             Text(
                                 settings.lastCallEpochMs?.let(::formatLastCall)
@@ -475,6 +493,7 @@ fun TunnelRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_protocol_version)) },
+                        leadingContent = { RowIcon(R.drawable.ic_tag) },
                         supportingContent = { Text(current.protocolVersion) },
                         modifier = Modifier.testTag("tunnel:protocol_version"),
                     )
@@ -555,12 +574,14 @@ private fun formatLastCall(epochMs: Long): String =
 @Composable
 private fun TunnelStatusRow(
     title: Int,
+    icon: Int,
     status: Int,
     tag: String,
     reason: Int? = null,
 ) {
     ListItem(
         headlineContent = { Text(stringResource(title)) },
+        leadingContent = { RowIcon(icon) },
         supportingContent = {
             Column {
                 Text(stringResource(status))
@@ -572,9 +593,10 @@ private fun TunnelStatusRow(
 }
 
 @Composable
-private fun CopyValueRow(title: Int, value: String, tag: String, copy: () -> Unit) {
+private fun CopyValueRow(title: Int, icon: Int, value: String, tag: String, copy: () -> Unit) {
     ListItem(
         headlineContent = { Text(stringResource(title)) },
+        leadingContent = { RowIcon(icon) },
         supportingContent = { Text(value) },
         trailingContent = {
             TextButton(onClick = copy, modifier = Modifier.testTag(tag)) {

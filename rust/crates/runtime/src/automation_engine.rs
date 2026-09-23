@@ -4,13 +4,16 @@
 
 use crate::{
     AUTOMATION_EXECUTION_ACTION, AdmittedAutomationExecution, ArtifactPort, AutomationEffects,
-    AutomationExecutionOutcome, AutomationInterpreter, CapabilityPort, ExecutionPort,
+    AutomationExecutionOutcome, AutomationInterpreter, CallOutcome, CapabilityPort, ExecutionPort,
     FilesystemPreflightPort, HostControlPort, PersistencePort, PortFuture, RuntimeCore,
     RuntimeState,
 };
 use contract::{
-    AutomationCompatibleCall, AutomationExecutionSummary, AutomationId, ErrorCode, ExecutionId,
-    PublicError, PublicResponse, ScalarValue, TaskAccepted, TaskId, TaskState,
+    AutomationCompatibleCall, AutomationElementInput, AutomationExecutionSummary, AutomationId,
+    AutomationVisualCall, CommandFailureCode, CommandResult, CommandTerminalState, ElementMatch,
+    ElementOperation, ErrorCode, ExecutionId, PointTarget, PublicError, PublicResponse,
+    ScalarValue, TaskAccepted, TaskId, TaskSnapshot, TaskState, VisualInteractInput, VisualNode,
+    VisualObserveResult,
 };
 use domain::{AUTOMATION_BUDGET_MS, DomainError};
 use std::{
@@ -24,6 +27,11 @@ use tokio::sync::Notify;
 
 /// Cadence at which an Automation Call observes the Task it is awaiting.
 const CHILD_TASK_POLL_MS: u64 = 100;
+/// Cadence at which an element step observes the screen again while its element is absent. Each
+/// observation is an ordinary retained request, so the cadence also bounds what a wait records.
+const ELEMENT_POLL_MS: u64 = 1_000;
+const ELEMENT_MAX_NODES: u32 = 5_000;
+const FOCUS_SETTLE_MS: u64 = 300;
 
 /// The clocks an AutomationExecution measures its budget, delays and commits with.
 pub trait AutomationClock: Send + Sync {
@@ -302,11 +310,13 @@ where
 
     /// Awaits one child Task. Budget expiry or cancellation cancels the owned child first and
     /// stops only after it settles; an unverified child cleanup interrupts this execution.
-    async fn await_child_task(&mut self, task_id: &TaskId) -> Result<(), DomainError> {
+    async fn await_child_task(&mut self, task_id: &TaskId) -> Result<TaskSnapshot, DomainError> {
         loop {
             let snapshot = self.core.get_task(task_id, self.clock.wall()?.1).await?;
             match snapshot.state {
-                TaskState::Completed => return Ok(()),
+                TaskState::Completed => return Ok(snapshot),
+                // A failed command still reports how it exited.
+                TaskState::Failed if snapshot.result.is_some() => return Ok(snapshot),
                 TaskState::Failed | TaskState::Cancelled | TaskState::Interrupted => {
                     return Err(DomainError::new(
                         snapshot
@@ -331,6 +341,114 @@ where
                 () = self.cancellation.requested() => {}
             }
         }
+    }
+
+    /// Submits one public request under this execution's clock and returns its result.
+    async fn submit(&self, payload: serde_json::Value) -> Result<serde_json::Value, DomainError> {
+        let request = request_bytes(payload)?;
+        let (timestamp, now_ms) = self.clock.wall()?;
+        let response =
+            crate::submit_public(self.core, &request, timestamp, now_ms, true, |_| async {
+                Err(DomainError::new(
+                    ErrorCode::Unsupported,
+                    "an Automation Call has no host-installed dispatch",
+                ))
+            })
+            .await;
+        call_result(&response)
+    }
+
+    /// Observes until a node matches, then acts on it through that same observation.
+    async fn element(
+        &mut self,
+        input: &AutomationElementInput,
+    ) -> Result<CallOutcome, DomainError> {
+        let deadline = self.clock.boot_millis()?.saturating_add(input.wait_ms);
+        // A screen that cannot be read yet is waited out like an element that is not there yet:
+        // the App being launched by the step before this one is exactly that moment. The last
+        // reason is what the step fails with once the wait is over.
+        let mut absent = DomainError::new(ErrorCode::NotFound, "no element matches");
+        loop {
+            let observation = match self
+                .submit(serde_json::json!({
+                    "tool": "visual",
+                    "action": "observe",
+                    "input": {
+                        "include_image": false,
+                        "include_nodes": true,
+                        "max_nodes": ELEMENT_MAX_NODES,
+                    },
+                }))
+                .await
+                .and_then(|observed| {
+                    serde_json::from_value::<VisualObserveResult>(observed).map_err(|_| {
+                        DomainError::new(
+                            ErrorCode::InternalError,
+                            "visual observe result is invalid",
+                        )
+                    })
+                }) {
+                Ok(observation) if observation.nodes.is_some() => observation,
+                Ok(_) => {
+                    absent = DomainError::new(
+                        ErrorCode::CapabilityUnavailable,
+                        "screen nodes are unavailable",
+                    );
+                    self.wait_for_element(deadline, &absent).await?;
+                    continue;
+                }
+                Err(error) => {
+                    absent = error;
+                    self.wait_for_element(deadline, &absent).await?;
+                    continue;
+                }
+            };
+            let nodes = observation.nodes.as_deref().unwrap_or_default();
+            if let Some(interactions) = element_interaction(&observation, nodes, input) {
+                for (index, interaction) in interactions.into_iter().enumerate() {
+                    if index > 0 {
+                        // The editor a press focused takes a moment to accept text.
+                        self.clock.sleep(FOCUS_SETTLE_MS).await?;
+                        self.checkpoint()?;
+                    }
+                    let input = serde_json::to_value(interaction).map_err(|_| {
+                        DomainError::new(
+                            ErrorCode::InternalError,
+                            "element interaction encoding failed",
+                        )
+                    })?;
+                    self.submit(serde_json::json!({
+                        "tool": "visual",
+                        "action": "interact",
+                        "input": input,
+                    }))
+                    .await?;
+                }
+                return Ok(CallOutcome::default());
+            }
+            self.wait_for_element(deadline, &absent).await?;
+        }
+    }
+
+    /// Waits one polling step of an element step, or ends it with `absent` once its wait is over.
+    async fn wait_for_element(
+        &mut self,
+        deadline: u64,
+        absent: &DomainError,
+    ) -> Result<(), DomainError> {
+        self.checkpoint()?;
+        let now = self.clock.boot_millis()?;
+        if now >= deadline {
+            return Err(absent.clone());
+        }
+        let wait = ELEMENT_POLL_MS
+            .min(deadline - now)
+            .min(self.remaining_ms()?);
+        tokio::select! {
+            result = self.clock.sleep(wait) => result?,
+            () = self.cancellation.requested() => {}
+        }
+        Ok(())
     }
 }
 
@@ -362,22 +480,25 @@ where
     fn call<'b>(
         &'b mut self,
         call: &'b AutomationCompatibleCall,
-    ) -> PortFuture<'b, Result<(), DomainError>> {
+    ) -> PortFuture<'b, Result<CallOutcome, DomainError>> {
         Box::pin(async move {
-            let request = public_request(call)?;
-            let (timestamp, now_ms) = self.clock.wall()?;
-            let response =
-                crate::submit_public(self.core, &request, timestamp, now_ms, true, |_| async {
-                    Err(DomainError::new(
-                        ErrorCode::Unsupported,
-                        "an Automation Call has no host-installed dispatch",
-                    ))
-                })
-                .await;
-            let result = call_result(&response)?;
-            match serde_json::from_value::<TaskAccepted>(result) {
-                Ok(accepted) => self.await_child_task(&accepted.task_id).await,
-                Err(_) => Ok(()),
+            if let AutomationCompatibleCall::Visual {
+                call: AutomationVisualCall::Element(input),
+            } = call
+            {
+                return self.element(input).await;
+            }
+            let result = self.submit(public_payload(call)?).await?;
+            match serde_json::from_value::<TaskAccepted>(result.clone()) {
+                Ok(accepted) => {
+                    let snapshot = self.await_child_task(&accepted.task_id).await?;
+                    let result = snapshot
+                        .result
+                        .and_then(|result| serde_json::to_value(result).ok())
+                        .unwrap_or(serde_json::Value::Null);
+                    Ok(command_outcome(&result))
+                }
+                Err(_) => Ok(command_outcome(&result)),
             }
         })
     }
@@ -424,9 +545,9 @@ where
     }
 }
 
-/// The ordinary S-CONTRACT-003 request for one saved Call: `{tool,action,args}` becomes
-/// `{tool,action,input}` under a fresh request identity.
-fn public_request(call: &AutomationCompatibleCall) -> Result<Vec<u8>, DomainError> {
+/// The ordinary S-CONTRACT-003 payload for one saved Call: `{tool,action,args}` becomes
+/// `{tool,action,input}`.
+fn public_payload(call: &AutomationCompatibleCall) -> Result<serde_json::Value, DomainError> {
     let encoding = || DomainError::new(ErrorCode::InternalError, "Automation Call encoding failed");
     let mut payload = serde_json::to_value(call).map_err(|_| encoding())?;
     {
@@ -434,12 +555,119 @@ fn public_request(call: &AutomationCompatibleCall) -> Result<Vec<u8>, DomainErro
         let args = object.remove("args").ok_or_else(encoding)?;
         object.insert("input".to_owned(), args);
     }
+    Ok(payload)
+}
+
+/// One public request under a fresh request identity.
+fn request_bytes(payload: serde_json::Value) -> Result<Vec<u8>, DomainError> {
     serde_json::to_vec(&serde_json::json!({
         "protocol_version": 1,
         "request_id": crate::command::new_uuid()?,
         "payload": payload,
     }))
-    .map_err(|_| encoding())
+    .map_err(|_| DomainError::new(ErrorCode::InternalError, "Automation Call encoding failed"))
+}
+
+/// A command reports its exit; a command that failed is a failed step.
+fn command_outcome(result: &serde_json::Value) -> CallOutcome {
+    let Ok(command) = serde_json::from_value::<CommandResult>(result.clone()) else {
+        return CallOutcome::default();
+    };
+    CallOutcome {
+        failure: (command.state == CommandTerminalState::Failed).then_some(
+            match command.failure_code {
+                Some(CommandFailureCode::Timeout) => ErrorCode::Timeout,
+                _ => ErrorCode::ExecutionFailed,
+            },
+        ),
+        exit_code: command.exit_code,
+    }
+}
+
+fn element_matches(node: &VisualNode, by: ElementMatch, value: &str) -> bool {
+    let value = value.trim();
+    match by {
+        ElementMatch::Text => node
+            .text
+            .as_deref()
+            .is_some_and(|text| text.trim() == value),
+        ElementMatch::TextContains => [node.text.as_deref(), node.content_description.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|text| text.contains(value)),
+        ElementMatch::Description => node
+            .content_description
+            .as_deref()
+            .is_some_and(|text| text.trim() == value),
+        ElementMatch::ResourceId => node.resource_id.as_deref().is_some_and(|id| {
+            id == value
+                || id
+                    .rsplit_once(":id/")
+                    .is_some_and(|(_, name)| name == value)
+        }),
+    }
+}
+
+/// The interactions an element step performs on the first matching, enabled node of one
+/// observation that it can address. A node that cannot take the action itself, such as a label
+/// inside a button or a node from a backend without node references, is pressed at its centre,
+/// which is bound to the same observation; text then goes to the editor that press focused.
+fn element_interaction(
+    observation: &VisualObserveResult,
+    nodes: &[VisualNode],
+    input: &AutomationElementInput,
+) -> Option<Vec<VisualInteractInput>> {
+    let coordinate = observation.interact.coordinate;
+    let node = nodes.iter().find(|node| {
+        (node.node_ref.is_some() || coordinate)
+            && node.enabled != Some(false)
+            && node.bounds.right > node.bounds.left
+            && node.bounds.bottom > node.bounds.top
+            && element_matches(node, input.by, &input.value)
+    })?;
+    let centre = || {
+        let display = &observation.display;
+        let point = |low: i32, high: i32, size: u32| {
+            u32::try_from(low + (high - low) / 2)
+                .unwrap_or(0)
+                .min(size.saturating_sub(1))
+        };
+        PointTarget::Coordinate {
+            observation_id: observation.observation_id.clone(),
+            x: point(node.bounds.left, node.bounds.right, display.width),
+            y: point(node.bounds.top, node.bounds.bottom, display.height),
+        }
+    };
+    if input.operation == ElementOperation::Text {
+        let text = input.text.clone().unwrap_or_default();
+        return Some(match &node.node_ref {
+            Some(node_ref) => vec![VisualInteractInput::Text {
+                text,
+                node_ref: Some(node_ref.clone()),
+            }],
+            None => vec![
+                VisualInteractInput::Tap { target: centre() },
+                VisualInteractInput::Text {
+                    text,
+                    node_ref: None,
+                },
+            ],
+        });
+    }
+    let actionable = match input.operation {
+        ElementOperation::LongPress => node.long_clickable == Some(true),
+        _ => node.clickable == Some(true),
+    };
+    let target = match &node.node_ref {
+        Some(node_ref) if actionable || !coordinate => PointTarget::Node {
+            node_ref: node_ref.clone(),
+        },
+        _ => centre(),
+    };
+    Some(vec![match input.operation {
+        ElementOperation::LongPress => VisualInteractInput::LongPress { target },
+        _ => VisualInteractInput::Tap { target },
+    }])
 }
 
 fn call_result(response: &[u8]) -> Result<serde_json::Value, DomainError> {
@@ -527,5 +755,158 @@ fn execution_error(code: ErrorCode) -> PublicError {
         message: None,
         capability: None,
         details: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use contract::{DisplayGeometry, NodeBounds, UuidV4, VisualInteractFact};
+
+    fn node(node_ref: &str, text: &str, clickable: bool) -> VisualNode {
+        serde_json::from_value(serde_json::json!({
+            "node_ref": node_ref,
+            "text": text,
+            "resource_id": format!("com.example:id/{node_ref}"),
+            "bounds": NodeBounds { left: 100, top: 200, right: 300, bottom: 260 },
+            "clickable": clickable,
+        }))
+        .unwrap()
+    }
+
+    fn observation(coordinate: bool) -> VisualObserveResult {
+        VisualObserveResult {
+            observation_id: UuidV4::parse("99000000-0000-4000-8000-000000000001").unwrap(),
+            observed_at: "2026-09-22T00:00:00.000Z".to_owned(),
+            display: DisplayGeometry {
+                width: 1080,
+                height: 2400,
+                rotation: 0,
+                density_dpi: None,
+            },
+            interact: VisualInteractFact {
+                coordinate,
+                node_unavailable_reason: None,
+                ttl_ms: 300_000,
+            },
+            foreground: None,
+            image_ref: None,
+            image_format: None,
+            image_unavailable_reason: None,
+            nodes: None,
+            nodes_truncated: None,
+            nodes_unavailable_reason: None,
+        }
+    }
+
+    fn input(operation: ElementOperation, by: ElementMatch, value: &str) -> AutomationElementInput {
+        AutomationElementInput {
+            operation,
+            by,
+            value: value.to_owned(),
+            text: (operation == ElementOperation::Text).then(|| "hello".to_owned()),
+            wait_ms: 0,
+        }
+    }
+
+    fn centre() -> PointTarget {
+        PointTarget::Coordinate {
+            observation_id: observation(true).observation_id,
+            x: 200,
+            y: 230,
+        }
+    }
+
+    #[test]
+    fn a_clickable_match_is_pressed_as_a_node_and_a_label_at_its_centre() {
+        let nodes = [
+            node("label", "Check in", false),
+            node("button", "Check in", true),
+        ];
+        let tap = |nodes: &[VisualNode], coordinate| {
+            element_interaction(
+                &observation(coordinate),
+                nodes,
+                &input(ElementOperation::Tap, ElementMatch::Text, " Check in "),
+            )
+        };
+        assert_eq!(
+            tap(&nodes[1..], true),
+            Some(vec![VisualInteractInput::Tap {
+                target: PointTarget::Node {
+                    node_ref: "button".to_owned()
+                }
+            }])
+        );
+        // The first match is a label: its centre is pressed through the same observation.
+        assert_eq!(
+            tap(&nodes, true),
+            Some(vec![VisualInteractInput::Tap { target: centre() }])
+        );
+        // Without coordinate input the label is still addressed as a node.
+        assert_eq!(
+            tap(&nodes, false),
+            Some(vec![VisualInteractInput::Tap {
+                target: PointTarget::Node {
+                    node_ref: "label".to_owned()
+                }
+            }])
+        );
+    }
+
+    #[test]
+    fn a_backend_without_node_references_is_addressed_by_coordinate() {
+        let mut unreferenced = node("input", "Search", true);
+        unreferenced.node_ref = None;
+        let nodes = [unreferenced];
+        let act = |operation, coordinate| {
+            element_interaction(
+                &observation(coordinate),
+                &nodes,
+                &input(operation, ElementMatch::Text, "Search"),
+            )
+        };
+        assert_eq!(
+            act(ElementOperation::Tap, true),
+            Some(vec![VisualInteractInput::Tap { target: centre() }])
+        );
+        assert_eq!(
+            act(ElementOperation::Text, true),
+            Some(vec![
+                VisualInteractInput::Tap { target: centre() },
+                VisualInteractInput::Text {
+                    text: "hello".to_owned(),
+                    node_ref: None
+                },
+            ])
+        );
+        // A node that can be addressed neither way is not a match.
+        assert_eq!(act(ElementOperation::Tap, false), None);
+    }
+
+    #[test]
+    fn matches_follow_the_requested_field() {
+        let nodes = [
+            node("title", "Daily check in", false),
+            node("input", "", true),
+        ];
+        let find = |by, value: &str| {
+            element_interaction(
+                &observation(true),
+                &nodes,
+                &input(ElementOperation::Text, by, value),
+            )
+        };
+        assert!(find(ElementMatch::Text, "check in").is_none());
+        assert!(find(ElementMatch::TextContains, "check in").is_some());
+        assert_eq!(
+            find(ElementMatch::ResourceId, "input"),
+            Some(vec![VisualInteractInput::Text {
+                text: "hello".to_owned(),
+                node_ref: Some("input".to_owned()),
+            }])
+        );
+        assert!(find(ElementMatch::ResourceId, "com.example:id/input").is_some());
+        assert!(find(ElementMatch::Description, "input").is_none());
     }
 }

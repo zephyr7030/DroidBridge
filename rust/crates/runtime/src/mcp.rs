@@ -94,7 +94,7 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"automation" => (
             "Automations",
-            "List, create, update, enable and delete automations.",
+            "List, create, update, enable, delete and run automations. Tap, long-press or type into screen elements with the visual `element` step, which finds its target by text when the automation runs.",
             false,
             true,
             false,
@@ -540,7 +540,7 @@ impl<H: McpHost> McpFacade<H> {
                 }
             },
             Some("error") => match response.get("error") {
-                Some(error) => (error.clone(), true),
+                Some(error) => (with_next_step(error.clone(), arguments), true),
                 None => {
                     return self.tool_failure(
                         id,
@@ -586,16 +586,45 @@ impl<H: McpHost> McpFacade<H> {
                 "the Runtime result could not be encoded",
             );
         };
-        rpc_result(
+        let mut content = vec![json!({"type": "text", "text": text})];
+        if !is_error {
+            match self.inline_image(&structured).await {
+                Ok(Some(image)) => content.push(image),
+                Ok(None) => {}
+                Err(_) => {
+                    return self.tool_failure(
+                        id,
+                        &operation,
+                        ErrorCode::InternalError,
+                        "the call completed, but its image artifact could not be returned",
+                    );
+                }
+            }
+        }
+        let response_id = id.clone();
+        let response = rpc_result(
             id,
             json!({
                 "resultType": "complete",
-                "content": [{"type": "text", "text": text}],
+                "content": content,
                 "structuredContent": structured,
                 "isError": is_error,
                 "_meta": meta,
             }),
-        )
+        );
+        if response
+            .body
+            .as_ref()
+            .is_some_and(|body| body.len() > MCP_RESPONSE_LIMIT_BYTES)
+        {
+            return self.tool_failure(
+                response_id,
+                &operation,
+                ErrorCode::ResourceLimit,
+                "the compressed image exceeds the MCP response limit",
+            );
+        }
+        response
     }
 
     /// Answers a call this facade could not serve to a Runtime result, in the shape every other
@@ -664,6 +693,48 @@ impl<H: McpHost> McpFacade<H> {
             }
         }
         Ok((!expiries.is_empty()).then_some(Value::Object(expiries)))
+    }
+
+    async fn inline_image(&self, result: &Value) -> Result<Option<Value>, DomainError> {
+        let Some(uri) = result.get("image_ref").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let reply = self
+            .host
+            .artifact_query(json!({
+                "protocol_version": 1,
+                "artifact_query": {"operation": "read", "uri": uri},
+            }))
+            .await?;
+        let (Some("image"), Some(size), Some(mime), Some(mut descriptor)) = (
+            reply.payload.get("kind").and_then(Value::as_str),
+            reply.payload.get("size").and_then(Value::as_u64),
+            reply.payload.get("mime").and_then(Value::as_str),
+            reply.descriptor,
+        ) else {
+            return Err(invalid_host_reply());
+        };
+        if reply.payload.get("uri").and_then(Value::as_str) != Some(uri)
+            || !matches!(mime, "image/heic" | "image/jpeg" | "image/png")
+            || size == 0
+            || size > 8 * 1_024 * 1_024
+        {
+            return Err(invalid_host_reply());
+        }
+        let mut bytes = Vec::new();
+        descriptor
+            .by_ref()
+            .take(size.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|_| invalid_host_reply())?;
+        if bytes.len() as u64 != size {
+            return Err(invalid_host_reply());
+        }
+        Ok(Some(json!({
+            "type": "image",
+            "data": STANDARD.encode(bytes),
+            "mimeType": mime,
+        })))
     }
 
     async fn list_resources(&self, id: Value, params: &Map<String, Value>) -> McpResponse {
@@ -781,7 +852,7 @@ impl<H: McpHost> McpFacade<H> {
                 }),
             },
             "image" => match mime {
-                Some(mime @ ("image/heic" | "image/png")) => {
+                Some(mime @ ("image/heic" | "image/jpeg" | "image/png")) => {
                     json!({"uri": uri, "mimeType": mime, "blob": STANDARD.encode(bytes)})
                 }
                 _ => return internal_error(id),
@@ -922,6 +993,95 @@ fn validate_metadata_headers(
         }
     }
     Ok(())
+}
+
+/// Adds what an AI client should do next to a Runtime failure that does not already say it. A
+/// client that only sees a code guesses; one told the next step takes it. Only codes with a
+/// concrete next step get one, and a message the Runtime wrote itself is never replaced.
+fn with_next_step(mut error: Value, arguments: &Map<String, Value>) -> Value {
+    let Some(object) = error.as_object_mut() else {
+        return error;
+    };
+    if object.contains_key("message") {
+        return error;
+    }
+    let code = object
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if let Some(step) = text_step(code, arguments).or_else(|| next_step(code)) {
+        object.insert("message".to_owned(), Value::from(step));
+    }
+    error
+}
+
+/// Typing fails for reasons the code alone does not name: the target is not an editor, or no editor
+/// has input focus. Focusing one is left to the caller, because nothing an unfocused input exposes
+/// tells it apart from a control that acts when tapped.
+fn text_step(code: &str, arguments: &Map<String, Value>) -> Option<&'static str> {
+    let input = arguments.get("input")?;
+    if arguments.get("action")?.as_str()? != "interact"
+        || input.get("operation")?.as_str()? != "text"
+    {
+        return None;
+    }
+    match (code, input.get("node_ref").is_some()) {
+        ("UNSUPPORTED", true) => Some(concat!(
+            "That node does not accept text. If it is an input's placeholder, tap it to focus ",
+            "the editor, observe again, then send text without node_ref to type into the focused ",
+            "editor."
+        )),
+        ("CAPABILITY_UNAVAILABLE", false) => Some(concat!(
+            "No editor has input focus. Observe, tap the input field, then send the text again ",
+            "without node_ref. If that still fails, call context status to check text input."
+        )),
+        _ => None,
+    }
+}
+
+fn next_step(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "STALE_REFERENCE" => concat!(
+            "The screen changed after that observation, or that observation could not address the ",
+            "screen (see its interact facts). Call visual observe again and act on the new ",
+            "observation's node_ref or coordinates; the old ones will not be accepted again."
+        ),
+        "STALE_AUTHORITY" => concat!(
+            "The display or execution backend changed while this call was handled. Observe or ",
+            "query again, then retry with fresh values."
+        ),
+        "CAPABILITY_UNAVAILABLE" => concat!(
+            "That capability is not available right now. Call context status to see which ",
+            "capabilities are available and why."
+        ),
+        "UNSUPPORTED" => concat!(
+            "The current backend does not support this. Call context status to see what this ",
+            "device supports, or choose another action."
+        ),
+        "RUN_AS_UNAVAILABLE" => concat!(
+            "That run_as identity is not available. Call context status and use an identity it ",
+            "lists as available."
+        ),
+        "PERMISSION_DENIED" => concat!(
+            "The device refused this operation. Call context status to see which permission or ",
+            "backend it needs."
+        ),
+        "NOT_FOUND" => {
+            "The referenced item does not exist or has expired. Obtain a fresh reference first."
+        }
+        "TIMEOUT" => concat!(
+            "It did not finish in time. Retry; for long-running commands use command run with ",
+            "as_task and follow the task with task_control."
+        ),
+        "RESOURCE_LIMIT" => concat!(
+            "A size or count limit was reached. Ask for less, for example fewer nodes, no image ",
+            "or a smaller file."
+        ),
+        "HOST_TRANSITION_PENDING" => {
+            "DroidBridge is switching its execution backend. Retry in a few seconds."
+        }
+        _ => return None,
+    })
 }
 
 fn tool_definitions() -> Result<Value, DomainError> {

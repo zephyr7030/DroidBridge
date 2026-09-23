@@ -105,7 +105,6 @@ pub(crate) enum PackageRootPrimitive {
 /// this boundary; no caller-supplied shell command reaches it.
 pub(crate) enum VisualRootPrimitive {
     ScreenshotPng,
-    ScreenshotRaw,
     HierarchyDump(PathBuf),
     Tap {
         x: u32,
@@ -422,13 +421,6 @@ impl RootCommandGuard {
                 8 * 1_024 * 1_024,
                 true,
             ),
-            VisualRootPrimitive::ScreenshotRaw => (
-                "/system/bin/screencap",
-                Vec::new(),
-                5_000,
-                67_108_864 + 16,
-                true,
-            ),
             VisualRootPrimitive::HierarchyDump(path) => (
                 "/system/bin/uiautomator",
                 vec!["dump".to_owned(), path.to_string_lossy().into_owned()],
@@ -624,6 +616,10 @@ impl RootCommandGuard {
                 ));
             }
         };
+        // `Command` retains its configured `Stdio` handles for a possible second
+        // spawn. This execution has one owner and one spawn; release the parent's
+        // duplicate pipe ends now so stream EOF follows the guard's actual lifetime.
+        drop(command);
         let pid = match i32::try_from(child.id()) {
             Ok(pid) => pid,
             Err(_) => {

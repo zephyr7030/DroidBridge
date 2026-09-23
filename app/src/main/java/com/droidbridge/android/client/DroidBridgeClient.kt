@@ -210,7 +210,9 @@ class DroidBridgeClient(
                 }
             }
             subscription = eventCallback
-            runtime?.subscribe(eventCallback)
+            // A Runtime that dies between binding and this call is reported by the disconnect
+            // callback that follows; failing here would take the UI process down with it.
+            if (runCatching { runtime?.subscribe(eventCallback) }.isFailure) return
             requestRefresh(token)
         }
 

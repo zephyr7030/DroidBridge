@@ -251,6 +251,8 @@ pub struct StoredAutomation {
     pub deleted_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_execution_id: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_requested_at: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -398,6 +400,7 @@ impl TryFrom<&RuntimeState> for CanonicalState {
                     deleted: record.deleted_at.is_some(),
                     deleted_at: record.deleted_at.clone(),
                     active_execution_id: record.active_execution_id.clone(),
+                    run_requested_at: record.run_requested_at.clone(),
                 })
                 .collect(),
             automation_executions: value
@@ -578,9 +581,8 @@ impl StoredSynchronousExecution {
                         && self.error.is_none()
                         && self.terminal_bytes == 0
                 }
-                SynchronousExecutionState::Completed => {
-                    valid_terminal && self.result.is_some() && self.error.is_none()
-                }
+                // A result over the retention bound answered its own call and is not kept.
+                SynchronousExecutionState::Completed => valid_terminal && self.error.is_none(),
                 SynchronousExecutionState::Failed | SynchronousExecutionState::Interrupted => {
                     valid_terminal && self.result.is_none() && self.error.is_some()
                 }
@@ -744,6 +746,7 @@ fn automation_records(
             next_due_at: stored.next_due_at,
             deleted_at: stored.deleted_at,
             active_execution_id: stored.active_execution_id,
+            run_requested_at: stored.run_requested_at,
         });
     }
     let executions = executions

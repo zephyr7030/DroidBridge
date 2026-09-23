@@ -1,8 +1,8 @@
 package com.droidbridge.android
 
-import com.droidbridge.android.product.update.ModulePresence
-import com.droidbridge.android.product.update.ReleaseClassification
-import com.droidbridge.android.product.update.ReleaseConfig
+import com.droidbridge.android.product.release.ModulePresence
+import com.droidbridge.android.product.release.ReleaseClassification
+import com.droidbridge.android.product.release.ReleaseConfig
 import com.droidbridge.android.product.update.ReleaseTransport
 import com.droidbridge.android.product.update.UpdateCheck
 import com.droidbridge.android.product.update.UpdateManager

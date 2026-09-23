@@ -179,6 +179,33 @@ fn admission(index: u64, created_at: DateTime<Utc>, now_ms: u64) -> TaskAdmissio
 }
 
 #[tokio::test]
+async fn i8_task_active_count_holds_the_host_until_every_task_is_terminal() {
+    let (core, _, _, _, host) = make_core();
+    let base = instant("2026-09-08T00:00:00.000Z");
+    let first = admission(90, base, millis(base));
+    let second = admission(91, base + Duration::milliseconds(1), millis(base) + 1);
+    core.admit_task(first.clone()).await.unwrap();
+    core.admit_task(second.clone()).await.unwrap();
+    assert_eq!(host.task_activity(), vec![1, 2]);
+
+    core.cancel_task(
+        &first.task_id,
+        timestamp(base + Duration::milliseconds(2)),
+        millis(base) + 2,
+    )
+    .await
+    .unwrap();
+    core.cancel_task(
+        &second.task_id,
+        timestamp(base + Duration::milliseconds(3)),
+        millis(base) + 3,
+    )
+    .await
+    .unwrap();
+    assert_eq!(host.task_activity().last(), Some(&0));
+}
+
+#[tokio::test]
 async fn i8_task_g01_encoded_public_list_get_cancel_share_one_registry_and_exact_projections() {
     let (core, persistence, executions, _, _) = make_core();
     let base = instant("2026-09-08T00:00:00.000Z");

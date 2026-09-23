@@ -28,7 +28,7 @@ dependencies = [
 
 [[package]]
 name = "app_native"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -167,7 +167,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "contract"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "schemars",
  "serde",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "daemon"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "contract",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "contract",
 ]
@@ -823,7 +823,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "persistence"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "contract",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -1352,7 +1352,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "supervisor"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "contract",

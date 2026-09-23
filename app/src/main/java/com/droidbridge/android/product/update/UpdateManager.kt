@@ -1,13 +1,21 @@
 package com.droidbridge.android.product.update
 
+import com.droidbridge.android.product.release.ModulePresence
+import com.droidbridge.android.product.release.ReleaseArtifact
+import com.droidbridge.android.product.release.ReleaseClassification
+import com.droidbridge.android.product.release.ReleaseConfig
+import com.droidbridge.android.product.release.ReleaseHash
+import com.droidbridge.android.product.release.ReleaseManifest
+import com.droidbridge.android.product.release.ReleaseManifests
+import com.droidbridge.android.product.release.ReleaseRejected
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.security.MessageDigest
 import java.net.URI
 import java.net.URL
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -167,7 +175,7 @@ class UpdateManager(
     private fun fetchVerified(version: String, artifact: ReleaseArtifact): File {
         val directory = File(cacheRoot, version)
         val target = File(directory, artifact.name)
-        if (target.isFile && target.length() == artifact.size && sha256(target) == artifact.sha256) return target
+        if (target.isFile && target.length() == artifact.size && ReleaseHash.sha256(target) == artifact.sha256) return target
         if (!directory.isDirectory && !directory.mkdirs()) throw IOException("update cache is unavailable")
         val part = File(directory, ".${artifact.name}.part")
         part.delete()
@@ -230,17 +238,5 @@ class UpdateManager(
         private const val MAX_AGE_MILLIS = 24L * 60 * 60 * 1000
         private const val MAX_CACHE_BYTES = 1L shl 30
 
-        fun sha256(file: File): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            file.inputStream().use { input ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    digest.update(buffer, 0, read)
-                }
-            }
-            return digest.digest().joinToString("") { "%02x".format(it) }
-        }
     }
 }

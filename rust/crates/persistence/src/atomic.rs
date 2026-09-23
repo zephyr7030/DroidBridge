@@ -329,11 +329,21 @@ impl StateStore {
     }
 
     pub fn load(&self, lease: &LifetimeLease) -> Result<CanonicalState, DomainError> {
+        self.load_measured(lease).map(|(state, _)| state)
+    }
+
+    /// The canonical state and its encoded size. The store is written as exactly this encoding,
+    /// so the bytes read are the measurement and the state is never encoded again to learn it.
+    pub fn load_measured(
+        &self,
+        lease: &LifetimeLease,
+    ) -> Result<(CanonicalState, u64), DomainError> {
         let _state_lock = FileLock::acquire(&self.base.join("runtime-state.lock"))?;
         self.validate_lease(lease)?;
         let path = self.base.join("runtime-state.json");
         let bytes = fs::read(path).map_err(io_error)?;
-        decode_canonical_state(&bytes)
+        let state = decode_canonical_state(&bytes)?;
+        Ok((state, bytes.len() as u64))
     }
 
     pub fn commit_owner_transition(

@@ -8,6 +8,11 @@ import kotlinx.coroutines.runBlocking
 
 internal object NativeAndroidExecutionDispatcher {
     private val registry = AtomicReference<AndroidExecutionRegistry?>(null)
+    private var taskActivitySink: ((Long) -> Unit)? = null
+    private var taskActivityEpoch: String? = null
+    private var taskActivityRevision = -1L
+    private var activeTaskCount = 0L
+    private var taskActivityFromDaemon = false
 
     fun install(value: AndroidExecutionRegistry) {
         check(registry.compareAndSet(null, value) || registry.get() === value)
@@ -15,6 +20,63 @@ internal object NativeAndroidExecutionDispatcher {
 
     fun uninstall(value: AndroidExecutionRegistry) {
         registry.compareAndSet(value, null)
+    }
+
+    @Synchronized
+    fun installTaskActivitySink(value: ((Long) -> Unit)?) {
+        taskActivitySink = value
+        if (value != null && taskActivityRevision >= 0) value(activeTaskCount)
+    }
+
+    @JvmStatic
+    @Synchronized
+    fun taskActivityChanged(runtimeEpoch: String, activeTasks: Long, canonicalRevision: Long) =
+        taskActivityChanged(runtimeEpoch, activeTasks, canonicalRevision, fromDaemon = false)
+
+    /**
+     * The same count, published by the root module's daemon for the Runtime it hosts. The App
+     * executes those Tasks' Android primitives, so its process must live exactly as long as they
+     * do; only the daemon's own count can be forgotten when that daemon goes away.
+     */
+    @Synchronized
+    fun daemonTaskActivityChanged(runtimeEpoch: String, activeTasks: Long, canonicalRevision: Long) =
+        taskActivityChanged(runtimeEpoch, activeTasks, canonicalRevision, fromDaemon = true)
+
+    /**
+     * The daemon that published the current count disconnected, so nothing here knows what it
+     * still runs. A Runtime hosted by this process keeps its own count.
+     */
+    @Synchronized
+    fun forgetDaemonTaskActivity() {
+        if (!taskActivityFromDaemon) return
+        taskActivityFromDaemon = false
+        taskActivityEpoch = null
+        taskActivityRevision = -1L
+        if (activeTaskCount == 0L) return
+        activeTaskCount = 0L
+        taskActivitySink?.invoke(0L)
+    }
+
+    private fun taskActivityChanged(
+        runtimeEpoch: String,
+        activeTasks: Long,
+        canonicalRevision: Long,
+        fromDaemon: Boolean,
+    ) {
+        if (runtimeEpoch.isEmpty() || activeTasks < 0 || canonicalRevision < 0) return
+        val epochChanged = runtimeEpoch != taskActivityEpoch
+        if (epochChanged) {
+            taskActivityEpoch = runtimeEpoch
+            taskActivityRevision = -1L
+        }
+        if (canonicalRevision <= taskActivityRevision) return
+        taskActivityRevision = canonicalRevision
+        // One store revision sequence outlives a host handoff, so whichever Runtime published this
+        // count owns it until a later one is accepted.
+        taskActivityFromDaemon = fromDaemon
+        if (!epochChanged && activeTasks == activeTaskCount) return
+        activeTaskCount = activeTasks
+        taskActivitySink?.invoke(activeTasks)
     }
 
     @JvmStatic

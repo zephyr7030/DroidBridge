@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.RemoteException;
 import android.service.notification.StatusBarNotification;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -65,8 +66,11 @@ final class HelperException extends Exception {
  * revalidate it under the same lock callbacks use, so a replacement is never targeted.
  */
 final class HelperOperations implements NotificationSink {
-    private static final int MAX_TITLE_CHARS = 256;
-    private static final int MAX_TEXT_CHARS = 512;
+    private static final int MAX_ACTIVE_NOTIFICATIONS = 256;
+    private static final int MAX_NOTIFICATION_KEY_BYTES = 2_048;
+    private static final int MAX_TITLE_BYTES = 256;
+    private static final int MAX_TEXT_BYTES = 512;
+    private static final int MAX_ACTIONS = 32;
 
     private static final class Entry {
         final long generation;
@@ -81,6 +85,7 @@ final class HelperOperations implements NotificationSink {
     private final PlatformBinding binding;
     private final Map<String, Entry> notifications = new HashMap<>();
     private boolean listening;
+    private long nextGeneration = 1;
 
     HelperOperations(PlatformBinding binding) {
         this.binding = binding;
@@ -183,19 +188,24 @@ final class HelperOperations implements NotificationSink {
         if (listening) return;
         binding.registerListener(this);
         listening = true;
-        for (StatusBarNotification notification : binding.activeNotifications()) {
-            if (!notifications.containsKey(notification.getKey())) {
-                notifications.put(notification.getKey(), new Entry(1, notification));
+        List<StatusBarNotification> active = new ArrayList<>(binding.activeNotifications());
+        active.sort((left, right) -> {
+            int posted = Long.compare(right.getPostTime(), left.getPostTime());
+            return posted != 0 ? posted : left.getKey().compareTo(right.getKey());
+        });
+        for (StatusBarNotification notification : active) {
+            if (notifications.size() >= MAX_ACTIVE_NOTIFICATIONS) break;
+            if (admitted(notification) && !notifications.containsKey(notification.getKey())) {
+                notifications.put(notification.getKey(), new Entry(allocateGeneration(), notification));
             }
         }
     }
 
     @Override
     public synchronized void posted(StatusBarNotification notification) {
-        if (notification == null) return;
-        Entry previous = notifications.get(notification.getKey());
-        long generation = previous == null ? 1 : previous.generation + 1;
-        notifications.put(notification.getKey(), new Entry(generation, notification));
+        if (!admitted(notification)) return;
+        notifications.put(notification.getKey(), new Entry(allocateGeneration(), notification));
+        if (notifications.size() > MAX_ACTIVE_NOTIFICATIONS) evictOldest();
     }
 
     @Override
@@ -211,7 +221,14 @@ final class HelperOperations implements NotificationSink {
     private synchronized JSONObject snapshot() throws Exception {
         ensureListening();
         JSONArray entries = new JSONArray();
-        for (Map.Entry<String, Entry> item : notifications.entrySet()) {
+        List<Map.Entry<String, Entry>> ordered = new ArrayList<>(notifications.entrySet());
+        ordered.sort((left, right) -> {
+            int posted = Long.compare(
+                right.getValue().notification.getPostTime(),
+                left.getValue().notification.getPostTime());
+            return posted != 0 ? posted : left.getKey().compareTo(right.getKey());
+        });
+        for (Map.Entry<String, Entry> item : ordered) {
             StatusBarNotification notification = item.getValue().notification;
             Notification platform = notification.getNotification();
             Bundle extras = platform.extras;
@@ -222,15 +239,20 @@ final class HelperOperations implements NotificationSink {
             if (notification.getPostTime() > 0) entry.put("posted_at_ms", notification.getPostTime());
             CharSequence title = extras == null ? null : extras.getCharSequence(Notification.EXTRA_TITLE);
             CharSequence text = extras == null ? null : extras.getCharSequence(Notification.EXTRA_TEXT);
-            if (title != null) entry.put("title", bounded(title, MAX_TITLE_CHARS));
-            if (text != null) entry.put("text", bounded(text, MAX_TEXT_CHARS));
+            if (title != null) entry.put("title", boundedContent(title, MAX_TITLE_BYTES));
+            if (text != null) entry.put("text", boundedContent(text, MAX_TEXT_BYTES));
             JSONArray actions = new JSONArray();
+            entry.put("action_count", platform.actions == null ? 0 : platform.actions.length);
             if (platform.actions != null) {
-                for (Notification.Action action : platform.actions) {
+                int count = Math.min(platform.actions.length, MAX_ACTIONS + 1);
+                for (int index = 0; index < count; index++) {
+                    Notification.Action action = platform.actions[index];
                     JSONObject actionFact = new JSONObject()
                         .put("requires_remote_input",
                             action.getRemoteInputs() != null && action.getRemoteInputs().length > 0);
-                    if (action.title != null) actionFact.put("title", bounded(action.title, MAX_TEXT_CHARS));
+                    if (action.title != null) {
+                        actionFact.put("title", boundedContent(action.title, MAX_TEXT_BYTES));
+                    }
                     actions.put(actionFact);
                 }
             }
@@ -272,12 +294,48 @@ final class HelperOperations implements NotificationSink {
         return entry.notification;
     }
 
-    private static String bounded(CharSequence value, int maxChars) {
+    private static String boundedContent(CharSequence value, int maxBytes) {
         String text = value.toString();
-        if (text.length() <= maxChars) return text;
-        int end = maxChars;
-        if (Character.isHighSurrogate(text.charAt(end - 1))) end--;
-        return text.substring(0, end);
+        if (text.getBytes(StandardCharsets.UTF_8).length <= maxBytes) return text;
+        int index = 0;
+        int bytes = 0;
+        while (index < text.length()) {
+            int codePoint = text.codePointAt(index);
+            int encoded = codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+            if (bytes + encoded > maxBytes) break;
+            bytes += encoded;
+            index += Character.charCount(codePoint);
+        }
+        return text.substring(0, index);
+    }
+
+    private static boolean admitted(StatusBarNotification notification) {
+        if (notification == null || notification.getKey() == null || notification.getPackageName() == null) {
+            return false;
+        }
+        int keyBytes = notification.getKey().getBytes(StandardCharsets.UTF_8).length;
+        int packageBytes = notification.getPackageName().getBytes(StandardCharsets.UTF_8).length;
+        return keyBytes > 0 && keyBytes <= MAX_NOTIFICATION_KEY_BYTES
+            && packageBytes > 0 && packageBytes <= 255;
+    }
+
+    private long allocateGeneration() {
+        if (nextGeneration == Long.MAX_VALUE) throw new IllegalStateException("notification generation exhausted");
+        return nextGeneration++;
+    }
+
+    private void evictOldest() {
+        String oldestKey = null;
+        long oldestPostTime = Long.MAX_VALUE;
+        for (Map.Entry<String, Entry> item : notifications.entrySet()) {
+            long postTime = item.getValue().notification.getPostTime();
+            if (oldestKey == null || postTime < oldestPostTime
+                || (postTime == oldestPostTime && item.getKey().compareTo(oldestKey) > 0)) {
+                oldestKey = item.getKey();
+                oldestPostTime = postTime;
+            }
+        }
+        if (oldestKey != null) notifications.remove(oldestKey);
     }
 
     private static void requireKeys(JSONObject request, String... optional) throws HelperException {

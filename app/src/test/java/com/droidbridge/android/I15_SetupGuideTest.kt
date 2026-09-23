@@ -6,10 +6,12 @@ import com.droidbridge.android.client.BackgroundFacts
 import com.droidbridge.android.client.BackgroundKeeper
 import com.droidbridge.android.client.BackgroundRows
 import com.droidbridge.android.client.CapabilityAction
+import com.droidbridge.android.client.CapabilityRow
 import com.droidbridge.android.client.CapabilityRowKey
 import com.droidbridge.android.client.CapabilityRowState
 import com.droidbridge.android.client.CapabilityRows
 import com.droidbridge.android.client.RuntimeReadiness
+import com.droidbridge.android.client.SetupRoute
 import com.droidbridge.android.client.RuntimeSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -115,6 +117,67 @@ class I15_SetupGuideTest {
         assertEquals(CapabilityRowState.Connected, both.single { it.key == CapabilityRowKey.Shizuku }.state)
         val plain = CapabilityRows.project(snapshot()).single { it.key == CapabilityRowKey.Shizuku }
         assertEquals(CapabilityAction.OpenShizuku, plain.action)
+    }
+
+    @Test
+    fun a_chosen_route_asks_for_its_own_backend_before_anything_else() {
+        val background = BackgroundRows.project(openFacts, BackgroundKeeper.None)
+        val access = listOf(
+            CapabilityRow(CapabilityRowKey.Runtime, CapabilityRowState.Ready),
+            CapabilityRow(CapabilityRowKey.RootBackend, CapabilityRowState.NotInstalled, CapabilityAction.InstallModule),
+            CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.NotInstalled, CapabilityAction.InstallShizuku),
+            CapabilityRow(CapabilityRowKey.Accessibility, CapabilityRowState.NotAllowed, CapabilityAction.OpenSettings),
+        )
+
+        val root = CapabilityRows.steps(access, background, SetupRoute.RootModule)
+        assertEquals(listOf(CapabilityRowKey.Runtime, CapabilityRowKey.RootBackend), root.access.map { it.key })
+        assertTrue("the background group is judged against a backend that is not there yet", root.background.isEmpty())
+
+        val shizuku = CapabilityRows.steps(access, background, SetupRoute.Shizuku)
+        assertEquals(listOf(CapabilityRowKey.Runtime, CapabilityRowKey.Shizuku), shizuku.access.map { it.key })
+
+        val accessibility = CapabilityRows.steps(access, background, SetupRoute.AccessibilityOnly)
+        assertEquals(
+            listOf(CapabilityRowKey.Runtime, CapabilityRowKey.Accessibility),
+            accessibility.access.map { it.key },
+        )
+        assertEquals(background, accessibility.background)
+    }
+
+    @Test
+    fun an_answered_backend_opens_the_rest_and_a_backend_the_device_has_is_always_shown() {
+        val background = BackgroundRows.project(openFacts, BackgroundKeeper.Shizuku)
+        val access = listOf(
+            CapabilityRow(CapabilityRowKey.Runtime, CapabilityRowState.Ready),
+            CapabilityRow(CapabilityRowKey.RootBackend, CapabilityRowState.Unavailable, reason = CapabilityRows.ROOT_NOT_DETECTED),
+            CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.Connected),
+            CapabilityRow(CapabilityRowKey.NotificationAccess, CapabilityRowState.NotAllowed, CapabilityAction.OpenSettings),
+        )
+
+        val shizuku = CapabilityRows.steps(access, background, SetupRoute.Shizuku)
+        assertEquals(
+            listOf(CapabilityRowKey.Runtime, CapabilityRowKey.Shizuku, CapabilityRowKey.NotificationAccess),
+            shizuku.access.map { it.key },
+        )
+        assertEquals(background, shizuku.background)
+
+        // The phone already has Shizuku, so the route that did not ask for it still reports it.
+        val accessibility = CapabilityRows.steps(access, background, SetupRoute.AccessibilityOnly)
+        assertEquals(
+            listOf(CapabilityRowKey.Runtime, CapabilityRowKey.Shizuku, CapabilityRowKey.NotificationAccess),
+            accessibility.access.map { it.key },
+        )
+    }
+
+    @Test
+    fun the_offered_route_is_the_one_this_phone_can_take_today() {
+        assertEquals(SetupRoute.RootModule, CapabilityRows.recommendedRoute(rootDetected = true, shizukuInstalled = false))
+        assertEquals(SetupRoute.RootModule, CapabilityRows.recommendedRoute(rootDetected = true, shizukuInstalled = true))
+        assertEquals(SetupRoute.Shizuku, CapabilityRows.recommendedRoute(rootDetected = false, shizukuInstalled = true))
+        assertEquals(
+            SetupRoute.AccessibilityOnly,
+            CapabilityRows.recommendedRoute(rootDetected = false, shizukuInstalled = false),
+        )
     }
 
     private fun snapshot(overrides: Map<String, AvailabilityFact> = emptyMap()): RuntimeSnapshot {

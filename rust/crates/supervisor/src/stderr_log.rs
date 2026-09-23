@@ -23,7 +23,14 @@ const DRAIN_CHUNK_BYTES: usize = 8_192;
 /// last always survive: a write larger than the limit fills the files it rotates through and loses
 /// only its own oldest part.
 pub fn append(directory: &Path, bytes: &[u8]) -> io::Result<()> {
-    fs::create_dir_all(directory)?;
+    // Only the log directory itself is created. Its parent is the App's canonical base: when App
+    // data is cleared under a running supervisor, recreating that base as root would leave it owned
+    // by root, and the daemon, which authenticates the App against that owner, would never connect.
+    match fs::create_dir(directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
     let path = directory.join(LOG_FILE_NAME);
     let mut written = file_len(&path)?;
     let mut file = open_append(&path)?;
@@ -172,6 +179,17 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stderr_log_never_recreates_a_cleared_canonical_base() {
+        let base = working_directory("stderr-cleared-base");
+        let directory = base.join("logs");
+
+        assert!(append(&directory, b"lost").is_err());
+        drain(Cursor::new(b"lost".to_vec()), &directory);
+
+        assert!(!base.exists());
     }
 
     #[test]

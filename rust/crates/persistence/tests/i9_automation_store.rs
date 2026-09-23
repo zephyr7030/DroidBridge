@@ -39,6 +39,7 @@ fn populated_state() -> RuntimeState {
         next_due_at: Some("2026-09-14T08:01:00.000Z".to_owned()),
         deleted_at: None,
         active_execution_id: None,
+        run_requested_at: None,
     });
     // A deleted Automation whose execution is still running keeps its tombstone.
     state.automations.push(AutomationRecord {
@@ -46,6 +47,7 @@ fn populated_state() -> RuntimeState {
         next_due_at: None,
         deleted_at: Some("2026-09-14T08:05:00.000Z".to_owned()),
         active_execution_id: Some(uuid(20)),
+        run_requested_at: None,
     });
     state.automation_executions.push(AutomationExecutionRecord {
         automation_id: uuid(2),

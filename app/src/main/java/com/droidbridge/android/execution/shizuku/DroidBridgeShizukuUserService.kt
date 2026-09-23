@@ -155,6 +155,7 @@ class DroidBridgeShizukuUserService : IShizukuUserService.Stub {
             detach(requiredToken, callerUid)
             // The Runtime process died rather than detaching: wake it again if it asked for that.
             scheduleKeepAliveWake(1)
+            retireIfIdle()
         }
         requiredToken.linkToDeath(deathRecipient, 0)
         clients[requiredToken] = Client(
@@ -171,6 +172,7 @@ class DroidBridgeShizukuUserService : IShizukuUserService.Stub {
     override fun detachClient(token: IBinder?) {
         val requiredToken = requireNotNull(token)
         detach(requiredToken, Binder.getCallingUid())
+        retireIfIdle()
     }
 
     override fun executeGuarded(
@@ -383,6 +385,16 @@ class DroidBridgeShizukuUserService : IShizukuUserService.Stub {
         fsCalls.entries.forEach { (key, call) ->
             if (key.token == token && fsCalls.remove(key, call)) {
                 runCatching { call.descriptor?.close() }
+            }
+        }
+    }
+
+    /** A daemon user service has no useful owner after its last client leaves without keep-alive. */
+    private fun retireIfIdle() {
+        runCatching {
+            deadlines.execute {
+                val retire = synchronized(this) { !keepAliveWanted && clients.isEmpty() }
+                if (retire) destroy()
             }
         }
     }

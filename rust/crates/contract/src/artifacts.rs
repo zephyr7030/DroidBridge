@@ -30,7 +30,6 @@ fn pretty<T: Serialize>(value: &T) -> Vec<u8> {
 fn schema_bundle() -> SchemaBundle {
     let mut schemas = BTreeMap::new();
     schemas.insert("automation", schema_for!(Automation));
-    schemas.insert("automation_descriptors", schema_for!(AutomationDescriptors));
     schemas.insert("daemon_operation", schema_for!(DaemonOperation));
     schemas.insert(
         "daemon_result.maintenance_install",
@@ -66,6 +65,7 @@ fn schema_bundle() -> SchemaBundle {
     schemas.insert("result.automation.list", schema_for!(AutomationListResult));
     schemas.insert("result.automation.save", schema_for!(Automation));
     schemas.insert("result.automation.set_enabled", schema_for!(Automation));
+    schemas.insert("result.automation.run", schema_for!(AutomationRunResult));
     schemas.insert("result.command.run", schema_for!(CommandResult));
     schemas.insert("result.command.run.accepted", schema_for!(TaskAccepted));
     schemas.insert("result.context.catalog", schema_for!(ContextCatalogResult));
@@ -230,6 +230,7 @@ pub fn result_schema_bindings() -> Value {
             vec!["result.automation.set_enabled"],
         ),
         ("automation.delete", vec!["result.automation.delete"]),
+        ("automation.run", vec!["result.automation.run"]),
         ("task_control.list", vec!["result.task_control.list"]),
         ("task_control.get", vec!["result.task_control.snapshot"]),
         ("task_control.cancel", vec!["result.task_control.snapshot"]),
@@ -363,13 +364,9 @@ pub fn kotlin_envelope_fixtures() -> Value {
 }
 
 pub fn generated_artifacts() -> Vec<GeneratedArtifact> {
-    let descriptors = automation_descriptors();
-    validate_automation_descriptors(&descriptors)
-        .expect("generated Automation descriptors satisfy the closed descriptor contract");
     [
         ("contract-schema.v1.json", pretty(&schema_bundle())),
         ("contract-metadata.v1.json", pretty(&contract_metadata())),
-        ("automation-ui-descriptors.v1.json", pretty(&descriptors)),
         ("settlement-bounds.v1.json", pretty(&settlement_bounds())),
         (
             "kotlin-envelope-fixtures.v1.json",

@@ -12,6 +12,9 @@ fn d20() -> u32 {
 fn d100() -> u32 {
     100
 }
+fn d10s() -> u64 {
+    10_000
+}
 
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type")]
@@ -39,6 +42,10 @@ pub enum ConditionSource {
     State,
     #[serde(rename = "trigger")]
     Trigger,
+    /// The outcome of the Call visited last in this execution: `succeeded`, `error_code` when it
+    /// failed, and `exit_code` when it ran a command.
+    #[serde(rename = "result")]
+    Result,
 }
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 pub enum ConditionOperator {
@@ -122,6 +129,46 @@ pub enum AutomationNetworkCall {
 pub enum AutomationVisualCall {
     #[serde(rename = "interact")]
     Interact(VisualInteractInput),
+    /// Observes the screen when the step runs, finds the first node that matches, and acts on it
+    /// through that fresh observation, so a saved Automation never holds a stale reference.
+    #[serde(rename = "element")]
+    Element(AutomationElementInput),
+}
+
+crate::common::string_enum!(ElementOperation { Tap=>"tap", LongPress=>"long_press", Text=>"text" });
+crate::common::string_enum!(ElementMatch { Text=>"text", TextContains=>"text_contains", Description=>"description", ResourceId=>"resource_id" });
+
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationElementInput {
+    pub operation: ElementOperation,
+    /// `text` and `description` match exactly, `text_contains` matches part of the text or the
+    /// description, and `resource_id` matches the full id or the part after `:id/`.
+    pub by: ElementMatch,
+    #[schemars(length(min = 1, max = 1024))]
+    pub value: String,
+    /// The text to enter; required for `operation: text` and rejected otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// How long to keep observing for the element before the step fails with NOT_FOUND.
+    #[serde(default = "d10s")]
+    #[schemars(range(max = 60000))]
+    pub wait_ms: u64,
+}
+
+crate::common::string_enum!(AutomationStepFailure { Stop=>"stop", Continue=>"continue" });
+
+#[allow(clippy::derivable_impls)]
+impl Default for AutomationStepFailure {
+    fn default() -> Self {
+        Self::Stop
+    }
+}
+
+impl AutomationStepFailure {
+    pub fn is_stop(&self) -> bool {
+        *self == Self::Stop
+    }
 }
 
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -141,6 +188,10 @@ pub enum AutomationAction {
     Call {
         #[serde(flatten)]
         call: AutomationCompatibleCall,
+        /// `stop` (default) ends the execution as failed; `continue` records the failure for a
+        /// later `result` condition and goes on.
+        #[serde(default, skip_serializing_if = "AutomationStepFailure::is_stop")]
+        on_failure: AutomationStepFailure,
     },
     #[serde(rename = "sequence")]
     Sequence {
@@ -179,6 +230,8 @@ enum AutomationActionWire {
     Call {
         #[serde(flatten)]
         call: AutomationCompatibleCall,
+        #[serde(default)]
+        on_failure: AutomationStepFailure,
     },
     #[serde(rename = "sequence")]
     Sequence { children: Vec<AutomationAction> },
@@ -205,7 +258,7 @@ enum AutomationActionWire {
 impl From<AutomationActionWire> for AutomationAction {
     fn from(value: AutomationActionWire) -> Self {
         match value {
-            AutomationActionWire::Call { call } => Self::Call { call },
+            AutomationActionWire::Call { call, on_failure } => Self::Call { call, on_failure },
             AutomationActionWire::Sequence { children } => Self::Sequence { children },
             AutomationActionWire::Conditional {
                 condition,
@@ -242,7 +295,7 @@ impl<'de> Deserialize<'de> for AutomationAction {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| de::Error::custom("Automation action type must be a string"))?;
         let allowed: &[&str] = match action_type {
-            "call" => &["type", "tool", "action", "args"],
+            "call" => &["type", "tool", "action", "args", "on_failure"],
             "sequence" => &["type", "children"],
             "conditional" => &["type", "condition", "then", "else"],
             "repeat" => &["type", "count", "action", "delay_ms"],
@@ -353,6 +406,18 @@ pub struct AutomationSetEnabledInput {
     pub automation_id: AutomationId,
     pub enabled: bool,
     pub expected_revision: u64,
+}
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationRunInput {
+    pub automation_id: AutomationId,
+}
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationRunResult {
+    pub automation_id: AutomationId,
+    /// The run starts once the scheduler admits it; its execution then appears in `get` history.
+    pub run_requested: crate::True,
 }
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

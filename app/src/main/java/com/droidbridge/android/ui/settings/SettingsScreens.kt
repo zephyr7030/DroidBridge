@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.LocaleList
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -63,6 +64,7 @@ import com.droidbridge.android.product.settings.ThemePreference
 import com.droidbridge.android.ui.common.RefreshIndicator
 import com.droidbridge.android.ui.common.RouteEmpty
 import com.droidbridge.android.ui.common.RouteError
+import com.droidbridge.android.ui.common.RowIcon
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -89,24 +91,25 @@ fun SettingsRoute(
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
             group(R.string.settings_group_connection) {
-                Link(R.string.capabilities_title, "settings:capabilities") { open(SettingsDestination.Capabilities) }
-                Link(R.string.agent_connection_title, "settings:agent") { open(SettingsDestination.AgentConnections) }
+                Link(R.string.capabilities_title, R.drawable.ic_verified_user, "settings:capabilities") { open(SettingsDestination.Capabilities) }
+                Link(R.string.agent_connection_title, R.drawable.ic_smart_toy, "settings:agent") { open(SettingsDestination.AgentConnections) }
             }
             group(R.string.settings_group_maintenance) {
-                Link(R.string.diagnostics_title, "settings:diagnostics") { open(SettingsDestination.Diagnostics) }
-                Link(R.string.settings_data, "settings:data") { open(SettingsDestination.Data) }
-                Link(R.string.settings_updates, "settings:updates") { open(SettingsDestination.Updates) }
+                Link(R.string.diagnostics_title, R.drawable.ic_bug_report, "settings:diagnostics") { open(SettingsDestination.Diagnostics) }
+                Link(R.string.settings_data, R.drawable.ic_storage, "settings:data") { open(SettingsDestination.Data) }
+                Link(R.string.settings_updates, R.drawable.ic_system_update, "settings:updates") { open(SettingsDestination.Updates) }
             }
             group(R.string.settings_group_app) {
                 LanguageItem()
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.settings_theme)) },
                     supportingContent = { Text(stringResource(themeLabel(theme))) },
+                    leadingContent = { RowIcon(R.drawable.ic_palette) },
                     modifier = Modifier.clickable { choosingTheme = true }.testTag("settings:theme"),
                 )
-                Link(R.string.settings_about, "settings:about") { open(SettingsDestination.About) }
+                Link(R.string.settings_about, R.drawable.ic_info, "settings:about") { open(SettingsDestination.About) }
                 // Always reachable fallback into first-launch setup, whatever state the app is in.
-                Link(R.string.settings_open_welcome, "settings:welcome") { open(SettingsDestination.Welcome) }
+                Link(R.string.settings_open_welcome, R.drawable.ic_replay, "settings:welcome") { open(SettingsDestination.Welcome) }
             }
         }
     }
@@ -148,6 +151,7 @@ private fun LanguageItem() {
                 },
             )
         },
+        leadingContent = { RowIcon(R.drawable.ic_language) },
         modifier = Modifier.clickable(enabled = supported != null) { choosing = true }.testTag("settings:language"),
     )
     if (choosing && supported != null) {
@@ -227,8 +231,12 @@ private fun LazyListScope.group(@StringRes title: Int, rows: @Composable () -> U
 }
 
 @Composable
-private fun Link(@StringRes title: Int, tag: String, action: () -> Unit) {
-    ListItem(headlineContent = { Text(stringResource(title)) }, modifier = Modifier.clickable(onClick = action).testTag(tag))
+private fun Link(@StringRes title: Int, @DrawableRes icon: Int, tag: String, action: () -> Unit) {
+    ListItem(
+        headlineContent = { Text(stringResource(title)) },
+        leadingContent = { RowIcon(icon) },
+        modifier = Modifier.clickable(onClick = action).testTag(tag),
+    )
 }
 
 @StringRes
@@ -238,11 +246,17 @@ private fun themeLabel(theme: ThemePreference): Int = when (theme) {
     ThemePreference.Dark -> R.string.theme_dark
 }
 
-enum class DataAction(@StringRes val title: Int, @StringRes val dialogTitle: Int, @StringRes val dialogBody: Int, val tag: String) {
-    ResetMcp(R.string.data_reset_mcp_credentials, R.string.dialog_reset_mcp_title, R.string.dialog_reset_mcp_body, "reset_mcp_credentials"),
-    ClearChatGpt(R.string.data_clear_chatgpt_credentials, R.string.dialog_clear_chatgpt_title, R.string.dialog_clear_chatgpt_body, "clear_chatgpt_credentials"),
-    ResetRuntime(R.string.data_reset_runtime_data, R.string.dialog_reset_runtime_title, R.string.dialog_reset_runtime_body, "reset_runtime_data"),
-    DeleteUpdates(R.string.data_delete_downloaded_updates, R.string.dialog_delete_updates_title, R.string.dialog_delete_updates_body, "delete_downloaded_updates"),
+enum class DataAction(
+    @StringRes val title: Int,
+    @DrawableRes val icon: Int,
+    @StringRes val dialogTitle: Int,
+    @StringRes val dialogBody: Int,
+    val tag: String,
+) {
+    ResetMcp(R.string.data_reset_mcp_credentials, R.drawable.ic_key_off, R.string.dialog_reset_mcp_title, R.string.dialog_reset_mcp_body, "reset_mcp_credentials"),
+    ClearChatGpt(R.string.data_clear_chatgpt_credentials, R.drawable.ic_logout, R.string.dialog_clear_chatgpt_title, R.string.dialog_clear_chatgpt_body, "clear_chatgpt_credentials"),
+    ResetRuntime(R.string.data_reset_runtime_data, R.drawable.ic_restart, R.string.dialog_reset_runtime_title, R.string.dialog_reset_runtime_body, "reset_runtime_data"),
+    DeleteUpdates(R.string.data_delete_downloaded_updates, R.drawable.ic_delete_sweep, R.string.dialog_delete_updates_title, R.string.dialog_delete_updates_body, "delete_downloaded_updates"),
 }
 
 data class DataUiState(val confirming: DataAction? = null, val running: DataAction? = null, val failed: Boolean = false)
@@ -298,6 +312,7 @@ fun DataRoute(viewModel: DataViewModel, back: () -> Unit) {
             items(DataAction.entries) { action ->
                 ListItem(
                     headlineContent = { Text(stringResource(action.title)) },
+                    leadingContent = { RowIcon(action.icon) },
                     modifier = Modifier
                         .clickable(enabled = state.running == null) { viewModel.request(action) }
                         .testTag("data:${action.tag}"),
@@ -358,6 +373,7 @@ fun AboutRoute(
                     supportingContent = {
                         Text("${stringResource(R.string.about_abi)}  ${Build.SUPPORTED_ABIS.firstOrNull().orEmpty()}")
                     },
+                    leadingContent = { RowIcon(R.drawable.ic_android) },
                     modifier = Modifier.testTag("about:platform"),
                 )
             }
@@ -365,13 +381,14 @@ fun AboutRoute(
                 ListItem(
                     headlineContent = { Text("${stringResource(R.string.mcp_protocol_version)}  $PROTOCOL_VERSION") },
                     supportingContent = { Text("${stringResource(R.string.diag_store_schema)}  $STORE_SCHEMA_VERSION") },
+                    leadingContent = { RowIcon(R.drawable.ic_tag) },
                     modifier = Modifier.testTag("about:versions"),
                 )
             }
             item {
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.about_licenses)) },
-                    leadingContent = { Icon(painterResource(R.drawable.ic_description), contentDescription = null) },
+                    leadingContent = { RowIcon(R.drawable.ic_description) },
                     modifier = Modifier.clickable(onClick = openLicenses).testTag("about:licenses"),
                 )
             }
@@ -380,6 +397,7 @@ fun AboutRoute(
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.about_repository)) },
                         supportingContent = { Text(url) },
+                        leadingContent = { RowIcon(R.drawable.ic_code) },
                         modifier = Modifier
                             .clickable { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
                             .testTag("about:repository"),

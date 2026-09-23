@@ -448,6 +448,7 @@ fn notification(key: &str, generation: u64, posted_at_ms: u64) -> AndroidNotific
         posted_at_ms: Some(posted_at_ms),
         title: Some("Alice".to_owned()),
         text: Some("See you at noon".to_owned()),
+        action_count: 2,
         actions: vec![
             AndroidNotificationActionRecord {
                 title: Some("Reply".to_owned()),

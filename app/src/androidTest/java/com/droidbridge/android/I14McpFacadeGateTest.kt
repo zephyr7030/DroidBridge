@@ -1,5 +1,6 @@
 package com.droidbridge.android
 
+import android.os.SystemClock
 import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -35,6 +36,277 @@ class I14McpFacadeGateTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
+    fun apkRuntimePublicMcpReportsAndDeliversOnlyItsObservedCapabilities() = runBlocking {
+        withListener(requireMagiskBackend = false) { endpoint, token ->
+            val listed = listTools(endpoint, token, 901)
+            assertFalse("tools/list JSON-RPC error: $listed", listed.has("error"))
+            val toolNames = listed.getJSONObject("result").getJSONArray("tools")
+                .let { tools -> (0 until tools.length()).map { tools.getJSONObject(it).getString("name") } }
+            assertTrue(toolNames.toString(), "context" in toolNames)
+            assertTrue(toolNames.toString(), "visual" in toolNames)
+            assertTrue(toolNames.toString(), "command" in toolNames)
+            assertTrue(toolNames.toString(), "task_control" in toolNames)
+
+            val status = structured(
+                call(endpoint, token, 902, "context", "status", JSONObject().put("detail", "full")),
+                "context.status",
+            )
+            assertEquals(status.toString(), APK_RUNTIME, status.getJSONObject("runtime").getString("host"))
+            assertTrue(
+                status.toString(),
+                status.getJSONObject("capabilities")
+                    .getJSONObject("visual.text_input")
+                    .getString("state") != "available",
+            )
+
+            val text = call(
+                endpoint, token, 903, "visual", "interact",
+                JSONObject().put("operation", "text").put("text", "black-box"),
+            )
+            assertTrue(text.toString(), text.getJSONObject("result").getBoolean("isError"))
+            assertEquals(
+                text.toString(),
+                "CAPABILITY_UNAVAILABLE",
+                structured(text, "visual.interact").getString("code"),
+            )
+
+            val commandStarted = SystemClock.elapsedRealtime()
+            val command = served(
+                call(
+                    endpoint, token, 904, "command", "run",
+                    JSONObject()
+                        .put("command", "printf black-box")
+                        .put("run_as", "app"),
+                ),
+                "command.run",
+            )
+            val commandElapsed = SystemClock.elapsedRealtime() - commandStarted
+            assertEquals(command.toString(), "completed", command.getString("state"))
+            assertEquals(command.toString(), "black-box", command.getString("stdout"))
+            assertTrue(
+                "command.run retained a fixed delay: result=$command, wall=${commandElapsed}ms",
+                command.getLong("duration_ms") < FAST_COMMAND_DEADLINE_MS &&
+                    commandElapsed < FAST_COMMAND_WALL_DEADLINE_MS,
+            )
+            println(
+                "black-box command.run: duration_ms=${command.getLong("duration_ms")}, " +
+                    "wall_ms=$commandElapsed",
+            )
+
+            var taskId: String? = null
+            try {
+                val accepted = served(
+                    call(
+                        endpoint, token, 905, "command", "run",
+                        JSONObject()
+                            .put("command", "sleep 30")
+                            .put("run_as", "app")
+                            .put("timeout_ms", 60_000)
+                            .put("as_task", true),
+                    ),
+                    "command.run",
+                )
+                val activeTaskId = accepted.getString("task_id")
+                taskId = activeTaskId
+                awaitTaskState(endpoint, token, activeTaskId, setOf("running"))
+
+                val cancelStarted = SystemClock.elapsedRealtime()
+                served(
+                    call(
+                        endpoint, token, 906, "task_control", "cancel",
+                        JSONObject().put("task_id", activeTaskId),
+                    ),
+                    "task_control.cancel",
+                )
+                val cancelled = awaitTaskState(endpoint, token, activeTaskId, setOf("cancelled"))
+                val cancelElapsed = SystemClock.elapsedRealtime() - cancelStarted
+                assertEquals(cancelled.toString(), "cancelled", cancelled.getString("state"))
+                assertTrue(
+                    "task cancel retained a fixed delay: task=$cancelled, wall=${cancelElapsed}ms",
+                    cancelElapsed < CANCEL_SETTLEMENT_DEADLINE_MS,
+                )
+                println("black-box task_control.cancel: wall_ms=$cancelElapsed")
+                taskId = null
+            } finally {
+                taskId?.let { active ->
+                    call(
+                        endpoint, token, 907, "task_control", "cancel",
+                        JSONObject().put("task_id", active),
+                    )
+                }
+            }
+
+            val shared = served(
+                call(
+                    endpoint, token, 908, "filesystem", "inspect",
+                    JSONObject().put("target", path("/sdcard/Download")),
+                ),
+                "filesystem.inspect",
+            )
+            assertEquals(shared.toString(), "directory", shared.getString("type"))
+        }
+    }
+
+    @Test
+    fun shizukuPublicMcpSharesOneStorageViewAndExtractsItsOwnArchive() = runBlocking {
+        withListener(requireMagiskBackend = false) { endpoint, token ->
+            val status = awaitShizuku(endpoint, token)
+            assertEquals(
+                status.toString(),
+                "available",
+                status.getJSONObject("grants").getJSONObject("shizuku.shell").getString("state"),
+            )
+            // The grant arrives before DroidBridge's own Shizuku user service does, and a shell
+            // command needs that service; the Runtime reports it as the command.shell capability.
+            val shell = awaitCapability(endpoint, token, "command.shell", 918)
+            assertEquals(
+                shell.toString(),
+                "available",
+                shell.getJSONObject("capabilities").getJSONObject("command.shell").getString("state"),
+            )
+            val shellProbe = served(
+                call(
+                    endpoint, token, 919, "command", "run",
+                    JSONObject().put("command", "printf ready").put("run_as", "shell"),
+                ),
+                "command.run",
+            )
+            assertEquals(shellProbe.toString(), "ready", shellProbe.getString("stdout"))
+
+            cleanBlackBoxSharedTargets(endpoint, token, 921)
+            val absent = call(
+                endpoint, token, 922, "filesystem", "manage",
+                JSONObject()
+                    .put("operation", "delete")
+                    .put("recursive", true)
+                    .put("target", path(BLACK_BOX_SHARED_DIRECTORY)),
+            )
+            assertTrue(absent.toString(), absent.getJSONObject("result").getBoolean("isError"))
+            assertEquals(
+                absent.toString(),
+                "NOT_FOUND",
+                structured(absent, "filesystem.manage").getString("code"),
+            )
+            try {
+                served(
+                    call(
+                        endpoint, token, 924, "filesystem", "manage",
+                        JSONObject()
+                            .put("operation", "mkdir")
+                            .put("parents", true)
+                            .put("target", path(BLACK_BOX_SHARED_DIRECTORY)),
+                    ),
+                    "filesystem.manage",
+                )
+                val shellCreated = served(
+                    call(
+                        endpoint, token, 925, "command", "run",
+                        JSONObject()
+                            .put(
+                                "command",
+                                "printf shell-view > $BLACK_BOX_SHELL_FILE",
+                            )
+                            .put("run_as", "shell"),
+                    ),
+                    "command.run",
+                )
+                assertEquals(shellCreated.toString(), "completed", shellCreated.getString("state"))
+
+                val directory = served(
+                    call(
+                        endpoint, token, 926, "filesystem", "inspect",
+                        JSONObject().put("target", path(BLACK_BOX_SHARED_DIRECTORY)),
+                    ),
+                    "filesystem.inspect",
+                )
+                assertEquals(directory.toString(), "directory", directory.getString("type"))
+                assertTrue(
+                    directory.toString(),
+                    (0 until directory.getJSONArray("entries").length()).any { index ->
+                        directory.getJSONArray("entries").getJSONObject(index).getString("name") ==
+                            BLACK_BOX_SHELL_FILE_NAME
+                    },
+                )
+                delete(endpoint, token, 927, BLACK_BOX_SHELL_FILE)
+                val shellObservedDelete = served(
+                    call(
+                        endpoint, token, 928, "command", "run",
+                        JSONObject()
+                            .put(
+                                "command",
+                                "test ! -e $BLACK_BOX_SHELL_FILE && printf absent",
+                            )
+                            .put("run_as", "shell"),
+                    ),
+                    "command.run",
+                )
+                assertEquals(shellObservedDelete.toString(), "completed", shellObservedDelete.getString("state"))
+                assertEquals(shellObservedDelete.toString(), "absent", shellObservedDelete.getString("stdout"))
+
+                served(
+                    call(
+                        endpoint, token, 929, "filesystem", "write",
+                        JSONObject()
+                            .put("mode", "create")
+                            .put("content", BLACK_BOX_ARCHIVE_CONTENT)
+                            .put("target", path(BLACK_BOX_ARCHIVE_SOURCE)),
+                    ),
+                    "filesystem.write",
+                )
+                val archived = awaitTask(
+                    endpoint,
+                    token,
+                    served(
+                        call(
+                            endpoint, token, 930, "filesystem", "archive",
+                            JSONObject()
+                                .put("operation", "create")
+                                .put("format", "zip")
+                                .put("sources", JSONArray().put(path(BLACK_BOX_SHARED_DIRECTORY)))
+                                .put("destination", path(BLACK_BOX_ARCHIVE)),
+                        ),
+                        "filesystem.archive",
+                    ).getString("task_id"),
+                )
+                assertEquals(archived.toString(), "completed", archived.getString("state"))
+
+                val listed = served(
+                    call(
+                        endpoint, token, 931, "filesystem", "archive",
+                        JSONObject()
+                            .put("operation", "list")
+                            .put("target", path(BLACK_BOX_ARCHIVE)),
+                    ),
+                    "filesystem.archive",
+                )
+                assertTrue(listed.toString(), listed.getJSONArray("entries").length() >= 2)
+
+                val extracted = awaitTask(
+                    endpoint,
+                    token,
+                    served(
+                        call(
+                            endpoint, token, 932, "filesystem", "archive",
+                            JSONObject()
+                                .put("operation", "extract")
+                                .put("target", path(BLACK_BOX_ARCHIVE))
+                                .put("destination", path(BLACK_BOX_EXTRACT_DESTINATION)),
+                        ),
+                        "filesystem.archive",
+                    ).getString("task_id"),
+                )
+                assertEquals(extracted.toString(), "completed", extracted.getString("state"))
+                assertEquals(
+                    BLACK_BOX_ARCHIVE_CONTENT,
+                    readText(endpoint, token, 933, BLACK_BOX_EXTRACTED_FILE),
+                )
+            } finally {
+                cleanBlackBoxSharedTargets(endpoint, token, 934)
+            }
+        }
+    }
+
+    @Test
     fun everyToolCallIsAnsweredWithItsOwnOutcome() = runBlocking {
         withListener { endpoint, token ->
             val status = structured(
@@ -66,11 +338,18 @@ class I14McpFacadeGateTest {
             )
             println("visual.interact: $tap")
             val answered = structured(tap, "visual.interact")
-            if (coordinateInput.getString("state") == "available") {
+            // The observation states whether its coordinates can be acted on; the capability only
+            // says the device could produce such an observation. An observation whose hierarchy
+            // could not be read (for example while another client holds UiAutomation) says so.
+            val addressable = observed.getJSONObject("interact").getBoolean("coordinate")
+            if (coordinateInput.getString("state") != "available") {
+                assertTrue("tap served: $answered", tap.getJSONObject("result").getBoolean("isError"))
+                assertEquals(answered.toString(), "CAPABILITY_UNAVAILABLE", answered.getString("code"))
+            } else if (addressable) {
                 assertFalse("tap refused: $answered", tap.getJSONObject("result").getBoolean("isError"))
             } else {
                 assertTrue("tap served: $answered", tap.getJSONObject("result").getBoolean("isError"))
-                assertEquals(answered.toString(), "CAPABILITY_UNAVAILABLE", answered.getString("code"))
+                assertEquals(answered.toString(), "STALE_REFERENCE", answered.getString("code"))
             }
 
             // A name the VPN resolves by itself: whether it completes, times out or cannot run, the
@@ -423,15 +702,19 @@ class I14McpFacadeGateTest {
     @Test
     fun unicodeTextAndKeyCombinationsReachTheFocusedEditor() = runBlocking {
         withListener { endpoint, token ->
-            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            // The default connection suppresses every other accessibility service for the rest of
+            // the instrumentation run, which would unbind DroidBridge's own and leave the gates
+            // that follow observing through a fallback this connection also blocks.
+            val uiAutomation = InstrumentationRegistry.getInstrumentation()
+                .getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
             fun shell(command: String): String =
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                    instrumentation.uiAutomation.executeShellCommand(command),
+                    uiAutomation.executeShellCommand(command),
                 ).use { it.readBytes().decodeToString() }
             // The instrumentation already owns the UiAutomation connection, so the editor is read
             // through it rather than through a second `uiautomator dump` client.
             fun focusedText(): String {
-                val root = instrumentation.uiAutomation.rootInActiveWindow
+                val root = uiAutomation.rootInActiveWindow
                     ?: throw AssertionError("no active window")
                 val focused = root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
                     ?: throw AssertionError("no focused editor")
@@ -480,7 +763,10 @@ class I14McpFacadeGateTest {
         }
     }
 
-    private suspend fun withListener(block: suspend (String, String) -> Unit) {
+    private suspend fun withListener(
+        requireMagiskBackend: Boolean = true,
+        block: suspend (String, String) -> Unit,
+    ) {
         val client = DroidBridgeClient(context)
         var enabled = false
         try {
@@ -494,7 +780,7 @@ class I14McpFacadeGateTest {
             val token = McpSettingsReplies.token(client.revealMcpToken())
             assertNotNull(token)
             val endpoint = requireNotNull(settings).endpoint
-            awaitMagiskBackend(client, endpoint, requireNotNull(token))
+            if (requireMagiskBackend) awaitMagiskBackend(client, endpoint, requireNotNull(token))
             block(endpoint, requireNotNull(token))
         } finally {
             if (enabled) client.setMcpEnabled(false)
@@ -538,6 +824,23 @@ class I14McpFacadeGateTest {
         JSONObject().put("mode", mode).put("target", path(SHARED_PATH)).put("content", content),
         requestId,
     )
+
+    private fun cleanBlackBoxSharedTargets(endpoint: String, token: String, id: Int) {
+        val cleaned = served(
+            call(
+                endpoint, token, id, "command", "run",
+                JSONObject()
+                    .put(
+                        "command",
+                        "rm -rf $BLACK_BOX_SHARED_DIRECTORY $BLACK_BOX_EXTRACT_DESTINATION " +
+                            BLACK_BOX_ARCHIVE,
+                    )
+                    .put("run_as", "shell"),
+            ),
+            "command.run",
+        )
+        assertEquals(cleaned.toString(), "completed", cleaned.getString("state"))
+    }
 
     private fun delete(endpoint: String, token: String, id: Int, value: String) {
         served(
@@ -624,6 +927,72 @@ class I14McpFacadeGateTest {
         return record
     }
 
+    private suspend fun awaitShizuku(endpoint: String, token: String): JSONObject {
+        return awaitGrant(endpoint, token, "shizuku.shell", 920)
+    }
+
+    private suspend fun awaitCapability(
+        endpoint: String,
+        token: String,
+        key: String,
+        id: Int,
+    ): JSONObject {
+        val deadline = SystemClock.elapsedRealtime() + SHIZUKU_TIMEOUT_MS
+        while (true) {
+            val status = structured(
+                call(endpoint, token, id, "context", "status", JSONObject().put("detail", "full")),
+                "context.status",
+            )
+            if (status.getJSONObject("capabilities").getJSONObject(key).getString("state") ==
+                "available"
+            ) {
+                return status
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) return status
+            delay(250)
+        }
+    }
+
+    private suspend fun awaitGrant(
+        endpoint: String,
+        token: String,
+        key: String,
+        id: Int,
+    ): JSONObject {
+        val deadline = SystemClock.elapsedRealtime() + SHIZUKU_TIMEOUT_MS
+        while (true) {
+            val status = structured(
+                call(endpoint, token, id, "context", "status", JSONObject().put("detail", "full")),
+                "context.status",
+            )
+            if (status.getJSONObject("grants").getJSONObject(key).getString("state") ==
+                "available"
+            ) {
+                return status
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) return status
+            delay(250)
+        }
+    }
+
+    private suspend fun awaitTaskState(
+        endpoint: String,
+        token: String,
+        taskId: String,
+        expected: Set<String>,
+    ): JSONObject {
+        var record = taskRecord(endpoint, token, taskId)
+        val deadline = SystemClock.elapsedRealtime() + TASK_TIMEOUT_MS
+        while (record.getString("state") !in expected) {
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                throw AssertionError("task $taskId never reached $expected: $record")
+            }
+            delay(100)
+            record = taskRecord(endpoint, token, taskId)
+        }
+        return record
+    }
+
     /** The capture owner's stop, whose own answer is reported by the caller that needed it. */
     private fun stopCapture(endpoint: String, token: String, captureId: String): String = call(
         endpoint, token, 16, "network", "capture",
@@ -687,7 +1056,6 @@ class I14McpFacadeGateTest {
         input: JSONObject,
         requestId: String? = null,
     ): JSONObject {
-        val target = URI(endpoint)
         val meta = JSONObject()
             .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
             .put("io.modelcontextprotocol/clientCapabilities", JSONObject())
@@ -708,6 +1076,36 @@ class I14McpFacadeGateTest {
             )
             .toString()
             .toByteArray(Charsets.UTF_8)
+        return post(endpoint, token, "tools/call", tool, body)
+    }
+
+    private fun listTools(endpoint: String, token: String, id: Int): JSONObject {
+        val body = JSONObject()
+            .put("jsonrpc", "2.0")
+            .put("id", id)
+            .put("method", "tools/list")
+            .put(
+                "params",
+                JSONObject().put(
+                    "_meta",
+                    JSONObject()
+                        .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                        .put("io.modelcontextprotocol/clientCapabilities", JSONObject()),
+                ),
+            )
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        return post(endpoint, token, "tools/list", null, body)
+    }
+
+    private fun post(
+        endpoint: String,
+        token: String,
+        method: String,
+        name: String?,
+        body: ByteArray,
+    ): JSONObject {
+        val target = URI(endpoint)
         val head = buildString {
             append("POST ${target.rawPath} HTTP/1.1\r\n")
             append("Host: ${target.host}:${target.port}\r\n")
@@ -715,8 +1113,8 @@ class I14McpFacadeGateTest {
             append("Content-Type: application/json\r\n")
             append("Accept: application/json, text/event-stream\r\n")
             append("MCP-Protocol-Version: $PROTOCOL_VERSION\r\n")
-            append("Mcp-Method: tools/call\r\n")
-            append("Mcp-Name: $tool\r\n")
+            append("Mcp-Method: $method\r\n")
+            name?.let { append("Mcp-Name: $it\r\n") }
             append("Content-Length: ${body.size}\r\n")
             append("Connection: close\r\n\r\n")
         }.toByteArray(Charsets.UTF_8)
@@ -748,10 +1146,15 @@ class I14McpFacadeGateTest {
         const val HOST_POLL_INTERVAL_MS = 2_000L
         const val CONNECT_TIMEOUT_MS = 15_000L
         const val MAGISK_BACKEND = "magisk_backend"
+        const val APK_RUNTIME = "apk_runtime"
         const val KEYCODE_A = 29
         const val META_CTRL_ON = 0x1000
         const val TASK_TIMEOUT_MS = 30_000L
         const val CALL_TIMEOUT_MS = 300_000L
+        const val FAST_COMMAND_DEADLINE_MS = 1_000L
+        const val FAST_COMMAND_WALL_DEADLINE_MS = 1_500L
+        const val CANCEL_SETTLEMENT_DEADLINE_MS = 1_500L
+        const val SHIZUKU_TIMEOUT_MS = 30_000L
         const val PROTOCOL_VERSION = "2026-07-28"
         const val TUN_INTERFACE = "tun0"
         const val LOOPBACK_INTERFACE = "lo"
@@ -768,6 +1171,15 @@ class I14McpFacadeGateTest {
         const val EXTRACT_DESTINATION = "/sdcard/Download/droidbridge-g14-extracted"
         const val EXTRACT_FILE = "payload.txt"
         const val EXTRACT_CONTENT = "extracted through shared storage"
+        const val BLACK_BOX_SHARED_DIRECTORY = "/sdcard/Download/droidbridge-mcp-black-box"
+        const val BLACK_BOX_SHELL_FILE_NAME = "shell-view.bin"
+        const val BLACK_BOX_SHELL_FILE = "$BLACK_BOX_SHARED_DIRECTORY/$BLACK_BOX_SHELL_FILE_NAME"
+        const val BLACK_BOX_ARCHIVE_SOURCE = "$BLACK_BOX_SHARED_DIRECTORY/archive-view.txt"
+        const val BLACK_BOX_ARCHIVE_CONTENT = "archive-view"
+        const val BLACK_BOX_ARCHIVE = "/sdcard/Download/droidbridge-mcp-black-box.zip"
+        const val BLACK_BOX_EXTRACT_DESTINATION = "/sdcard/Download/droidbridge-mcp-black-box-extracted"
+        const val BLACK_BOX_EXTRACTED_FILE =
+            "$BLACK_BOX_EXTRACT_DESTINATION/droidbridge-mcp-black-box/archive-view.txt"
         const val PCAP_FILE_HEADER_BYTES = 24
         const val PCAP_LINKTYPE_ETHERNET = 1
         const val PCAP_LINKTYPE_RAW = 101

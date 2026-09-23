@@ -1,4 +1,4 @@
-package com.droidbridge.android.product.update
+package com.droidbridge.android.runtimehost
 
 import android.content.BroadcastReceiver
 import android.content.Context

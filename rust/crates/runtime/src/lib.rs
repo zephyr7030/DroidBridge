@@ -20,6 +20,7 @@ mod state;
 mod vertical;
 mod visual;
 mod visual_input;
+mod visual_wire;
 
 pub use android::*;
 pub use automation::*;
@@ -40,3 +41,4 @@ pub use state::*;
 pub use vertical::*;
 pub use visual::*;
 pub use visual_input::*;
+pub use visual_wire::*;

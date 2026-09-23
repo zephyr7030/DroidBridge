@@ -38,13 +38,10 @@ fn runtime_owned(state: &CanonicalState) -> CanonicalState {
 
 impl PersistencePort for JsonPersistencePort {
     fn load(&self) -> Result<RuntimeState, DomainError> {
-        let canonical = self.store.load(&self.lease)?;
+        let (canonical, encoded_len) = self.store.load_measured(&self.lease)?;
         if let Ok(mut loaded) = self.loaded.lock() {
             *loaded = Some((canonical.store_revision, runtime_owned(&canonical)));
         }
-        let encoded_len = serde_json::to_vec(&canonical)
-            .map_err(|_| DomainError::new(ErrorCode::InternalError, "store encoding failed"))?
-            .len() as u64;
         let mut state = RuntimeState::try_from(canonical)?;
         state.used_bytes = encoded_len;
         Ok(state)

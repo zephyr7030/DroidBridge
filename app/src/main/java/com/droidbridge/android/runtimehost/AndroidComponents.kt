@@ -20,6 +20,13 @@ import com.droidbridge.android.execution.android.NotificationOperationSurface
 import com.droidbridge.android.execution.android.NotificationPlatform
 import com.droidbridge.android.execution.android.ObservedNotification
 import com.droidbridge.android.execution.android.RegisteredCapabilityState
+import com.droidbridge.android.execution.android.MAX_ACTIVE_NOTIFICATIONS
+import com.droidbridge.android.execution.android.MAX_NOTIFICATION_ACTIONS
+import com.droidbridge.android.execution.android.MAX_NOTIFICATION_ACTION_TITLE_BYTES
+import com.droidbridge.android.execution.android.MAX_NOTIFICATION_KEY_BYTES
+import com.droidbridge.android.execution.android.MAX_NOTIFICATION_TEXT_BYTES
+import com.droidbridge.android.execution.android.MAX_NOTIFICATION_TITLE_BYTES
+import com.droidbridge.android.execution.android.boundedUtf8
 import java.util.concurrent.atomic.AtomicLong
 
 class DroidBridgeNotificationListenerService : NotificationListenerService() {
@@ -39,7 +46,15 @@ class DroidBridgeNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onListenerConnected() {
-        operations.connected(activeNotifications.orEmpty().map(::observe))
+        operations.connected(
+            activeNotifications.orEmpty()
+                .asSequence()
+                .filter { it.key.encodeToByteArray().size <= MAX_NOTIFICATION_KEY_BYTES }
+                .sortedWith(compareByDescending<StatusBarNotification> { it.postTime }.thenBy { it.key })
+                .take(MAX_ACTIVE_NOTIFICATIONS)
+                .map(::observe)
+                .toList(),
+        )
         if (!bound) {
             bound = bindService(
                 Intent(this, DroidBridgeService::class.java),
@@ -98,14 +113,21 @@ class DroidBridgeNotificationListenerService : NotificationListenerService() {
             key = sbn.key,
             packageName = sbn.packageName,
             postedAtMillis = sbn.postTime,
-            title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
-            text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
-            actions = notification.actions.orEmpty().map { action ->
+            title = boundedUtf8(
+                extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+                MAX_NOTIFICATION_TITLE_BYTES,
+            ),
+            text = boundedUtf8(
+                extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+                MAX_NOTIFICATION_TEXT_BYTES,
+            ),
+            actionCount = notification.actions?.size ?: 0,
+            actions = notification.actions.orEmpty().asSequence().take(MAX_NOTIFICATION_ACTIONS + 1).map { action ->
                 NotificationActionFact(
-                    title = action.title?.toString(),
+                    title = boundedUtf8(action.title?.toString(), MAX_NOTIFICATION_ACTION_TITLE_BYTES),
                     requiresRemoteInput = action.remoteInputs?.isNotEmpty() == true,
                 )
-            },
+            }.toList(),
             handle = sbn,
         )
     }
@@ -203,20 +225,18 @@ private fun deliverAutomationWake(
     pending: BroadcastReceiver.PendingResult,
     phase: String,
 ) {
-    val application = context.applicationContext as DroidBridgeApplication
-    Thread({
-        try {
-            val keeper = runCatching {
-                context.startService(Intent(context, DroidBridgeService::class.java))
-            }
-            if (keeper.isFailure) {
-                NativeRuntime.nativeRecordHostFault("FGS_START_REJECTED", phase)
-            }
-            if (!application.requireRuntimeGraph().hostController.wakeAutomation()) {
-                NativeRuntime.nativeRecordHostFault("RUNTIME_UNAVAILABLE", phase)
-            }
-        } finally {
-            pending.finish()
+    try {
+        val keeper = runCatching {
+            context.startForegroundService(
+                Intent(context, DroidBridgeService::class.java)
+                    .setAction(DroidBridgeService.ACTION_AUTOMATION_WAKE)
+                    .putExtra(DroidBridgeService.EXTRA_AUTOMATION_PHASE, phase),
+            )
         }
-    }, "droidbridge-automation-wake").start()
+        if (keeper.isFailure) {
+            NativeRuntime.nativeRecordHostFault("FGS_START_REJECTED", phase)
+        }
+    } finally {
+        pending.finish()
+    }
 }

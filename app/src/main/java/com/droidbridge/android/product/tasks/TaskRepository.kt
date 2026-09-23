@@ -1,8 +1,9 @@
 package com.droidbridge.android.product.tasks
 
+import com.droidbridge.android.product.runtime.PublicCalls
+import com.droidbridge.android.product.runtime.PublicError
+import com.droidbridge.android.product.runtime.PublicResult
 import java.util.UUID
-import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -15,27 +16,22 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
-/** A public error code exactly as the Runtime returned it; the UI adds no message of its own. */
-data class TaskError(val code: String)
-
-sealed interface TaskResult<out T> {
-    data class Success<T>(val value: T) : TaskResult<T>
-    data class Failure(val error: TaskError) : TaskResult<Nothing>
-}
 
 /** The UI's only Task access: ordinary public `task_control.*` requests over the client. */
 class TaskRepository(
-    private val submit: suspend (ByteArray) -> ByteArray,
-    private val requestIds: () -> String = { UUID.randomUUID().toString() },
+    submit: suspend (ByteArray) -> ByteArray,
+    requestIds: () -> String = { UUID.randomUUID().toString() },
 ) {
-    suspend fun list(filter: TaskFilter, limit: Int = DEFAULT_LIMIT): TaskResult<List<TaskSummary>> {
+    private val calls = PublicCalls(submit, requestIds)
+
+    suspend fun list(filter: TaskFilter, limit: Int = DEFAULT_LIMIT): PublicResult<List<TaskSummary>> {
         val input = buildJsonObject {
             put("limit", limit)
-            filter.states?.let { states -> put("states", buildJsonArray { states.forEach { add(JsonPrimitive(it)) } }) }
+            put("states", buildJsonArray { filter.states.forEach { add(JsonPrimitive(it)) } })
         }
         return when (val listed = call("list", input)) {
-            is TaskResult.Failure -> listed
-            is TaskResult.Success -> parse {
+            is PublicResult.Failure -> listed
+            is PublicResult.Success -> parse {
                 listed.value.getValue("tasks").jsonArray.map { element ->
                     val row = element.jsonObject
                     TaskSummary(
@@ -52,14 +48,14 @@ class TaskRepository(
         }
     }
 
-    suspend fun get(taskId: String): TaskResult<TaskSnapshot> = snapshot("get", taskId)
+    suspend fun get(taskId: String): PublicResult<TaskSnapshot> = snapshot("get", taskId)
 
-    suspend fun cancel(taskId: String): TaskResult<TaskSnapshot> = snapshot("cancel", taskId)
+    suspend fun cancel(taskId: String): PublicResult<TaskSnapshot> = snapshot("cancel", taskId)
 
-    private suspend fun snapshot(action: String, taskId: String): TaskResult<TaskSnapshot> =
+    private suspend fun snapshot(action: String, taskId: String): PublicResult<TaskSnapshot> =
         when (val fetched = call(action, buildJsonObject { put("task_id", taskId) })) {
-            is TaskResult.Failure -> fetched
-            is TaskResult.Success -> parse {
+            is PublicResult.Failure -> fetched
+            is PublicResult.Success -> parse {
                 val row = fetched.value
                 TaskSnapshot(
                     taskId = row.string("task_id"),
@@ -77,41 +73,14 @@ class TaskRepository(
             }
         }
 
-    private suspend fun call(action: String, input: JsonObject): TaskResult<JsonObject> {
-        val envelope = buildJsonObject {
-            put("protocol_version", 1)
-            put("request_id", requestIds())
-            put("payload", buildJsonObject {
-                put("tool", "task_control")
-                put("action", action)
-                put("input", input)
-            })
-        }
-        val response = try {
-            submit(envelope.toString().encodeToByteArray())
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            return TaskResult.Failure(TaskError(RUNTIME_UNAVAILABLE))
-        }
-        val root = try {
-            Json.parseToJsonElement(response.decodeToString()).jsonObject
-        } catch (_: RuntimeException) {
-            return TaskResult.Failure(TaskError(PROTOCOL_MISMATCH))
-        }
-        return when ((root["outcome"] as? JsonPrimitive)?.contentOrNull) {
-            "success" -> (root["result"] as? JsonObject)?.let { TaskResult.Success(it) }
-            "error" -> ((root["error"] as? JsonObject)?.get("code") as? JsonPrimitive)?.contentOrNull
-                ?.let { TaskResult.Failure(TaskError(it)) }
-            else -> null
-        } ?: TaskResult.Failure(TaskError(PROTOCOL_MISMATCH))
-    }
+    private suspend fun call(action: String, input: JsonObject): PublicResult<JsonObject> =
+        calls.call("task_control", action, input)
 
-    private inline fun <T> parse(block: () -> T): TaskResult<T> =
+    private inline fun <T> parse(block: () -> T): PublicResult<T> =
         try {
-            TaskResult.Success(block())
+            PublicResult.Success(block())
         } catch (_: RuntimeException) {
-            TaskResult.Failure(TaskError(PROTOCOL_MISMATCH))
+            PublicResult.Failure(PublicError(PublicCalls.PROTOCOL_MISMATCH))
         }
 
     private fun JsonObject.string(key: String): String =

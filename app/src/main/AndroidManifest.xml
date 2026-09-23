@@ -14,12 +14,17 @@
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
-        <!-- Root managers, so the setup guide can suggest the Magisk module without running su. -->
+        <!-- Root managers, so setup can suggest the root module without running su. -->
         <package android:name="com.topjohnwu.magisk" />
         <package android:name="io.github.huskydg.magisk" />
         <package android:name="io.github.vvb2060.magisk" />
         <package android:name="me.weishu.kernelsu" />
         <package android:name="me.bmax.apatch" />
+        <!-- Launchable apps, so an automation step can offer the app to open. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application
@@ -106,7 +111,7 @@
             android:process=":runtime" />
 
         <receiver
-            android:name=".product.update.PackageInstallerResultReceiver"
+            android:name=".runtimehost.PackageInstallerResultReceiver"
             android:exported="false" />
     </application>
 </manifest>

@@ -1034,7 +1034,7 @@ pub enum NetworkDiagnoseInput {
     Route { destination_ip: String },
 }
 
-string_enum!(ImageFormat{Heic=>"heic",Png=>"png"});
+string_enum!(ImageFormat{Heic=>"heic",Jpeg=>"jpeg",Png=>"png"});
 string_enum!(InteractionTarget{Node=>"node",Coordinate=>"coordinate",Focused=>"focused"});
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "action", content = "input")]
@@ -1418,6 +1418,8 @@ pub enum AutomationCall {
     SetEnabled(AutomationSetEnabledInput),
     #[serde(rename = "delete")]
     Delete(AutomationDeleteInput),
+    #[serde(rename = "run")]
+    Run(AutomationRunInput),
 }
 pub const ROOT_TOOL_ORDER: [MotherTool; 8] = [
     MotherTool::Context,
@@ -1437,7 +1439,7 @@ pub struct ActionSpec {
     pub capability_requirement: &'static str,
 }
 
-pub const ACTION_SPECS: [ActionSpec; 29] = [
+pub const ACTION_SPECS: [ActionSpec; 30] = [
     ActionSpec {
         tool: "context",
         action: "status",
@@ -1591,6 +1593,12 @@ pub const ACTION_SPECS: [ActionSpec; 29] = [
     ActionSpec {
         tool: "automation",
         action: "delete",
+        automation_compatible: false,
+        capability_requirement: "none",
+    },
+    ActionSpec {
+        tool: "automation",
+        action: "run",
         automation_compatible: false,
         capability_requirement: "none",
     },

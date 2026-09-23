@@ -312,6 +312,7 @@ async fn i3_g01_fake_backed_core_exposes_stable_ports_and_interpreter() {
                 as_task: false,
             }),
         },
+        on_failure: Default::default(),
     };
     let action = AutomationAction::Sequence {
         children: vec![
@@ -338,9 +339,9 @@ async fn i3_g01_fake_backed_core_exposes_stable_ports_and_interpreter() {
         fn call<'a>(
             &'a mut self,
             _call: &'a AutomationCompatibleCall,
-        ) -> PortFuture<'a, Result<(), domain::DomainError>> {
+        ) -> PortFuture<'a, Result<runtime::CallOutcome, domain::DomainError>> {
             self.calls += 1;
-            Box::pin(async { Ok(()) })
+            Box::pin(async { Ok(runtime::CallOutcome::default()) })
         }
 
         fn set_state<'a>(
@@ -520,6 +521,49 @@ async fn i3_g03_synchronous_mutation_is_persisted_once_and_terminal_result_is_re
             .code,
         ErrorCode::InvalidArgument
     );
+}
+
+#[tokio::test]
+async fn i3_g03_a_result_over_the_retention_bound_answers_once_and_is_never_replayed() {
+    let (core, persistence, _, executions, _, _) = make_core();
+    let admission = synchronous_admission(9);
+    let large = serde_json::json!({"nodes": "n".repeat(10 * 1024)});
+    executions.push(Ok(ExecutionCompletion {
+        fence: fence(2),
+        capability_generation: 2,
+        outcome: ExecutionOutcome::SynchronousCompleted {
+            result: large.clone(),
+            encoded_bytes: 128,
+        },
+        cleanup_verified: true,
+    }));
+
+    // The call that ran the operation receives its whole result.
+    assert_eq!(
+        core.run_synchronous(
+            admission.clone(),
+            "2026-09-06T00:00:02.000Z".to_owned(),
+            2_000
+        )
+        .await
+        .unwrap(),
+        large
+    );
+    let state = persistence.snapshot();
+    let record = &state.synchronous_executions[0];
+    assert_eq!(record.state, SynchronousExecutionState::Completed);
+    assert_eq!(record.result, None, "the store keeps no copy of it");
+    assert!(record.terminal_bytes < 10 * 1024);
+    assert_eq!(state.reserved_bytes, 0);
+
+    // A replay is told it cannot be answered again and runs nothing a second time.
+    let replay = core
+        .run_synchronous(admission, "2026-09-06T00:00:03.000Z".to_owned(), 3_000)
+        .await
+        .unwrap_err();
+    assert_eq!(replay.code, ErrorCode::ResourceLimit);
+    assert_eq!(replay.operation, "filesystem.manage");
+    assert_eq!(executions.started().len(), 1);
 }
 
 #[tokio::test]
@@ -882,11 +926,7 @@ async fn i3_g05_readiness_blocks_admission_and_start_despite_provider_grants() {
         ));
         assert_eq!(core.list_tasks(None, 100, 2).await.unwrap().len(), 1);
         let settled = core
-            .run_task(
-                &queued.task_id,
-                "2026-09-06T00:00:01.000Z".to_owned(),
-                2000,
-            )
+            .run_task(&queued.task_id, "2026-09-06T00:00:01.000Z".to_owned(), 2000)
             .await
             .unwrap();
         assert_eq!(settled.state, TaskState::Failed);

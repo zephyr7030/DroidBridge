@@ -140,7 +140,7 @@ internal class ShizukuController(
     fun stop() {
         if (!started) return
         started = false
-        disconnect()
+        disconnect(retire = !keepAliveWanted)
         Shizuku.removeBinderReceivedListener(binderReceived)
         Shizuku.removeBinderDeadListener(binderDead)
         Shizuku.removeRequestPermissionResultListener(permissionResult)
@@ -516,7 +516,7 @@ internal class ShizukuController(
     }
 
     @Synchronized
-    private fun disconnect() {
+    private fun disconnect(retire: Boolean = false) {
         connectionGeneration++
         probeGeneration++
         session?.let { current ->
@@ -527,7 +527,13 @@ internal class ShizukuController(
         val connection = activeConnection
         val args = activeArgs
         if (connection != null && args != null) {
+            // This drops the library's cached connection at once, so the next bind gets a new one.
             runCatching { Shizuku.unbindUserService(args, connection, false) }
+            // A service nobody keeps alive exits once this App leaves it for good, but the server
+            // keeps its record until that process is gone, and a bind in between would be handed
+            // the exiting service and never connect. Leaving for good removes the record as well.
+            // A reconnect does not: records are per service, so it would discard the new one.
+            if (retire) runCatching { Shizuku.unbindUserService(args, null, true) }
         }
         session = null
         incompatibleUid = null

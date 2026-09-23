@@ -174,6 +174,7 @@ fn realistic_baseline() -> CanonicalState {
         deleted: false,
         deleted_at: None,
         active_execution_id: None,
+        run_requested_at: None,
     });
     state.automation_executions.push(StoredAutomationExecution {
         automation_id,
@@ -219,6 +220,7 @@ fn fixture_automation(index: u64) -> StoredAutomation {
         deleted: false,
         deleted_at: None,
         active_execution_id: None,
+        run_requested_at: None,
     }
 }
 

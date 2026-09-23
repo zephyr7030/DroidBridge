@@ -251,7 +251,10 @@ impl ArtifactStore {
             ));
         }
         if publish.kind == ArtifactKind::Image
-            && !matches!(publish.mime.as_deref(), Some("image/heic" | "image/png"))
+            && !matches!(
+                publish.mime.as_deref(),
+                Some("image/heic" | "image/jpeg" | "image/png")
+            )
         {
             return Err(DomainError::invalid("image artifact MIME is invalid"));
         }
@@ -786,7 +789,7 @@ impl runtime::ArtifactPort for RuntimeArtifactPort {
         mime: &str,
         bytes: &[u8],
     ) -> Result<runtime::ArtifactMetadata, DomainError> {
-        if !matches!(mime, "image/heic" | "image/png") {
+        if !matches!(mime, "image/heic" | "image/jpeg" | "image/png") {
             return Err(DomainError::invalid("image artifact MIME is invalid"));
         }
         self.publish_kind(ArtifactKind::Image, Some(execution_id), Some(mime), bytes)
@@ -857,7 +860,10 @@ pub(crate) fn validate_artifact_record(record: &ArtifactRecord) -> Result<(), Do
         return Err(DomainError::invalid("artifact manifest record is invalid"));
     }
     if record.kind == ArtifactKind::Image
-        && !matches!(record.mime.as_deref(), Some("image/heic" | "image/png"))
+        && !matches!(
+            record.mime.as_deref(),
+            Some("image/heic" | "image/jpeg" | "image/png")
+        )
     {
         return Err(DomainError::invalid("image artifact MIME is invalid"));
     }

@@ -11,7 +11,7 @@ import com.droidbridge.android.execution.android.NativeAndroidExecutionDispatche
 import com.droidbridge.android.execution.android.NetworkDefaultObservation
 import com.droidbridge.android.BuildConfig
 import com.droidbridge.android.execution.android.RoleDescriptor
-import com.droidbridge.android.product.update.ReleaseConfig
+import com.droidbridge.android.product.release.ReleaseConfig
 import org.json.JSONObject
 import java.io.File
 import java.time.ZoneId
@@ -169,6 +169,9 @@ internal class RuntimeHostController(
                 promotionConnection.compareAndSet(connection, null)
                 promotionState.clearBackend()
                 observeModule(ModuleObservation.Absent)
+                // Nothing here can still know what a departed daemon runs, and it wakes this
+                // process again with the current count as soon as it reconnects.
+                NativeAndroidExecutionDispatcher.forgetDaemonTaskActivity()
                 if (
                     runtimeSession.get().host == DaemonHostToken.MagiskBackend &&
                     companionDisconnectedSink.get()?.invoke() == false

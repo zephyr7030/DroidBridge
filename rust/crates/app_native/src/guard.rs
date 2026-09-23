@@ -393,6 +393,12 @@ mod unix {
                     return Err(self.unstarted(execution_id, error));
                 }
             };
+            // `Command` retains the configured `Stdio` handles so it can be spawned
+            // again. Keeping it alive here keeps this process's stdout/stderr write
+            // ends open after the guard exits, forcing every collector to wait for its
+            // EOF deadline. This run has exactly one spawn, so release those duplicate
+            // handles as soon as the child owns its copies.
+            drop(command);
             let pid = match i32::try_from(child.id()) {
                 Ok(pid) => pid,
                 Err(_) => {

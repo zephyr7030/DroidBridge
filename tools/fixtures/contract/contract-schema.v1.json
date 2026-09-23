@@ -146,6 +146,10 @@
             {
               "type": "object",
               "properties": {
+                "on_failure": {
+                  "description": "`stop` (default) ends the execution as failed; `continue` records the failure for a\nlater `result` condition and goes on.",
+                  "$ref": "#/$defs/AutomationStepFailure"
+                },
                 "type": {
                   "type": "string",
                   "const": "call"
@@ -276,6 +280,23 @@
                         },
                         "args": {
                           "$ref": "#/$defs/VisualInteractInput"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "args"
+                      ]
+                    },
+                    {
+                      "description": "Observes the screen when the step runs, finds the first node that matches, and acts on it\nthrough that fresh observation, so a saved Automation never holds a stale reference.",
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "const": "element"
+                        },
+                        "args": {
+                          "$ref": "#/$defs/AutomationElementInput"
                         }
                       },
                       "required": [
@@ -497,6 +518,51 @@
             "operator"
           ]
         },
+        "AutomationElementInput": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "description": "`text` and `description` match exactly, `text_contains` matches part of the text or the\ndescription, and `resource_id` matches the full id or the part after `:id/`.",
+              "$ref": "#/$defs/ElementMatch"
+            },
+            "operation": {
+              "$ref": "#/$defs/ElementOperation"
+            },
+            "text": {
+              "description": "The text to enter; required for `operation: text` and rejected otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "wait_ms": {
+              "description": "How long to keep observing for the element before the step fails with NOT_FOUND.",
+              "type": "integer",
+              "format": "uint64",
+              "default": 10000,
+              "maximum": 60000,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "by",
+            "value"
+          ]
+        },
+        "AutomationStepFailure": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "continue"
+          ]
+        },
         "AutomationTrigger": {
           "oneOf": [
             {
@@ -642,10 +708,19 @@
           ]
         },
         "ConditionSource": {
-          "type": "string",
-          "enum": [
-            "state",
-            "trigger"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "state",
+                "trigger"
+              ]
+            },
+            {
+              "description": "The outcome of the Call visited last in this execution: `succeeded`, `error_code` when it\nfailed, and `exit_code` when it ran a command.",
+              "type": "string",
+              "const": "result"
+            }
           ]
         },
         "DnsRecordType": {
@@ -653,6 +728,23 @@
           "enum": [
             "A",
             "AAAA"
+          ]
+        },
+        "ElementMatch": {
+          "type": "string",
+          "enum": [
+            "text",
+            "text_contains",
+            "description",
+            "resource_id"
+          ]
+        },
+        "ElementOperation": {
+          "type": "string",
+          "enum": [
+            "tap",
+            "long_press",
+            "text"
           ]
         },
         "FileTarget": {
@@ -1175,242 +1267,6 @@
                 "key_code"
               ]
             }
-          ]
-        }
-      }
-    },
-    "automation_descriptors": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "title": "AutomationDescriptors",
-      "type": "object",
-      "properties": {
-        "fields": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/FieldDescriptor"
-          }
-        },
-        "schema_version": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "fields"
-      ],
-      "$defs": {
-        "Control": {
-          "type": "string",
-          "enum": [
-            "switch",
-            "outlined_text",
-            "single_choice",
-            "optional",
-            "scalar_editor",
-            "key_scalar_table"
-          ]
-        },
-        "DescriptorOption": {
-          "type": "object",
-          "properties": {
-            "label_resource": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "label_source": {
-              "$ref": "#/$defs/LabelSource"
-            },
-            "value": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "value",
-            "label_source"
-          ]
-        },
-        "FieldDescriptor": {
-          "type": "object",
-          "properties": {
-            "canonical_path": {
-              "type": "string"
-            },
-            "control": {
-              "$ref": "#/$defs/Control"
-            },
-            "default": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ScalarValue"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "key_max_utf8_bytes": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint32",
-              "minimum": 0
-            },
-            "label_resource": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "label_source": {
-              "$ref": "#/$defs/LabelSource"
-            },
-            "max_rows": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint32",
-              "minimum": 0
-            },
-            "options": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/$defs/DescriptorOption"
-              }
-            },
-            "order": {
-              "type": "integer",
-              "format": "uint32",
-              "minimum": 0
-            },
-            "required": {
-              "type": "boolean"
-            },
-            "scalar_kinds": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "string"
-              }
-            },
-            "sensitive": {
-              "type": "boolean"
-            },
-            "string_max_utf8_bytes": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint32",
-              "minimum": 0
-            },
-            "validation": {
-              "type": "string"
-            },
-            "value_kind": {
-              "$ref": "#/$defs/ValueKind"
-            },
-            "visible_when": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/$defs/VisibilityCondition"
-              }
-            },
-            "wrapped_control": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/WrappedControl"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "canonical_path",
-            "order",
-            "label_source",
-            "control",
-            "sensitive",
-            "validation",
-            "value_kind",
-            "required"
-          ]
-        },
-        "LabelSource": {
-          "type": "string",
-          "enum": [
-            "resource",
-            "wire_name"
-          ]
-        },
-        "ScalarValue": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "integer",
-              "format": "int64"
-            },
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "ValueKind": {
-          "type": "string",
-          "enum": [
-            "boolean",
-            "string",
-            "integer",
-            "scalar"
-          ]
-        },
-        "VisibilityCondition": {
-          "type": "object",
-          "properties": {
-            "canonical_path": {
-              "type": "string"
-            },
-            "values": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/ScalarValue"
-              }
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "canonical_path",
-            "values"
-          ]
-        },
-        "WrappedControl": {
-          "type": "string",
-          "enum": [
-            "outlined_text",
-            "single_choice"
           ]
         }
       }
@@ -2467,6 +2323,10 @@
             {
               "type": "object",
               "properties": {
+                "on_failure": {
+                  "description": "`stop` (default) ends the execution as failed; `continue` records the failure for a\nlater `result` condition and goes on.",
+                  "$ref": "#/$defs/AutomationStepFailure"
+                },
                 "type": {
                   "type": "string",
                   "const": "call"
@@ -2597,6 +2457,23 @@
                         },
                         "args": {
                           "$ref": "#/$defs/VisualInteractInput"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "args"
+                      ]
+                    },
+                    {
+                      "description": "Observes the screen when the step runs, finds the first node that matches, and acts on it\nthrough that fresh observation, so a saved Automation never holds a stale reference.",
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "const": "element"
+                        },
+                        "args": {
+                          "$ref": "#/$defs/AutomationElementInput"
                         }
                       },
                       "required": [
@@ -2860,6 +2737,44 @@
             "expected_revision"
           ]
         },
+        "AutomationElementInput": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "description": "`text` and `description` match exactly, `text_contains` matches part of the text or the\ndescription, and `resource_id` matches the full id or the part after `:id/`.",
+              "$ref": "#/$defs/ElementMatch"
+            },
+            "operation": {
+              "$ref": "#/$defs/ElementOperation"
+            },
+            "text": {
+              "description": "The text to enter; required for `operation: text` and rejected otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "wait_ms": {
+              "description": "How long to keep observing for the element before the step fails with NOT_FOUND.",
+              "type": "integer",
+              "format": "uint64",
+              "default": 10000,
+              "maximum": 60000,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "by",
+            "value"
+          ]
+        },
         "AutomationGetInput": {
           "type": "object",
           "properties": {
@@ -2892,6 +2807,18 @@
           },
           "additionalProperties": false
         },
+        "AutomationRunInput": {
+          "type": "object",
+          "properties": {
+            "automation_id": {
+              "$ref": "#/$defs/UuidV4"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "automation_id"
+          ]
+        },
         "AutomationSaveInput": {
           "anyOf": [
             {
@@ -2922,6 +2849,13 @@
             "automation_id",
             "enabled",
             "expected_revision"
+          ]
+        },
+        "AutomationStepFailure": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "continue"
           ]
         },
         "AutomationTrigger": {
@@ -3103,10 +3037,19 @@
           ]
         },
         "ConditionSource": {
-          "type": "string",
-          "enum": [
-            "state",
-            "trigger"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "state",
+                "trigger"
+              ]
+            },
+            {
+              "description": "The outcome of the Call visited last in this execution: `succeeded`, `error_code` when it\nfailed, and `exit_code` when it ran a command.",
+              "type": "string",
+              "const": "result"
+            }
           ]
         },
         "ContextCatalogInput": {
@@ -3152,6 +3095,23 @@
           "enum": [
             "A",
             "AAAA"
+          ]
+        },
+        "ElementMatch": {
+          "type": "string",
+          "enum": [
+            "text",
+            "text_contains",
+            "description",
+            "resource_id"
+          ]
+        },
+        "ElementOperation": {
+          "type": "string",
+          "enum": [
+            "tap",
+            "long_press",
+            "text"
           ]
         },
         "EthernetBuild": {
@@ -4606,6 +4566,22 @@
                     },
                     "input": {
                       "$ref": "#/$defs/AutomationDeleteInput"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "input"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "action": {
+                      "type": "string",
+                      "const": "run"
+                    },
+                    "input": {
+                      "$ref": "#/$defs/AutomationRunInput"
                     }
                   },
                   "required": [
@@ -6083,6 +6059,10 @@
             {
               "type": "object",
               "properties": {
+                "on_failure": {
+                  "description": "`stop` (default) ends the execution as failed; `continue` records the failure for a\nlater `result` condition and goes on.",
+                  "$ref": "#/$defs/AutomationStepFailure"
+                },
                 "type": {
                   "type": "string",
                   "const": "call"
@@ -6213,6 +6193,23 @@
                         },
                         "args": {
                           "$ref": "#/$defs/VisualInteractInput"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "args"
+                      ]
+                    },
+                    {
+                      "description": "Observes the screen when the step runs, finds the first node that matches, and acts on it\nthrough that fresh observation, so a saved Automation never holds a stale reference.",
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "const": "element"
+                        },
+                        "args": {
+                          "$ref": "#/$defs/AutomationElementInput"
                         }
                       },
                       "required": [
@@ -6434,6 +6431,44 @@
             "operator"
           ]
         },
+        "AutomationElementInput": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "description": "`text` and `description` match exactly, `text_contains` matches part of the text or the\ndescription, and `resource_id` matches the full id or the part after `:id/`.",
+              "$ref": "#/$defs/ElementMatch"
+            },
+            "operation": {
+              "$ref": "#/$defs/ElementOperation"
+            },
+            "text": {
+              "description": "The text to enter; required for `operation: text` and rejected otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "wait_ms": {
+              "description": "How long to keep observing for the element before the step fails with NOT_FOUND.",
+              "type": "integer",
+              "format": "uint64",
+              "default": 10000,
+              "maximum": 60000,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "by",
+            "value"
+          ]
+        },
         "AutomationExecutionState": {
           "type": "string",
           "enum": [
@@ -6485,6 +6520,13 @@
             "task_id",
             "state",
             "triggered_at"
+          ]
+        },
+        "AutomationStepFailure": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "continue"
           ]
         },
         "AutomationTrigger": {
@@ -6632,10 +6674,19 @@
           ]
         },
         "ConditionSource": {
-          "type": "string",
-          "enum": [
-            "state",
-            "trigger"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "state",
+                "trigger"
+              ]
+            },
+            {
+              "description": "The outcome of the Call visited last in this execution: `succeeded`, `error_code` when it\nfailed, and `exit_code` when it ran a command.",
+              "type": "string",
+              "const": "result"
+            }
           ]
         },
         "DnsRecordType": {
@@ -6643,6 +6694,23 @@
           "enum": [
             "A",
             "AAAA"
+          ]
+        },
+        "ElementMatch": {
+          "type": "string",
+          "enum": [
+            "text",
+            "text_contains",
+            "description",
+            "resource_id"
+          ]
+        },
+        "ElementOperation": {
+          "type": "string",
+          "enum": [
+            "tap",
+            "long_press",
+            "text"
           ]
         },
         "FileTarget": {
@@ -7285,6 +7353,35 @@
         }
       }
     },
+    "result.automation.run": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "AutomationRunResult",
+      "type": "object",
+      "properties": {
+        "automation_id": {
+          "$ref": "#/$defs/UuidV4"
+        },
+        "run_requested": {
+          "description": "The run starts once the scheduler admits it; its execution then appears in `get` history.",
+          "$ref": "#/$defs/True"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "automation_id",
+        "run_requested"
+      ],
+      "$defs": {
+        "True": {
+          "type": "boolean",
+          "const": true
+        },
+        "UuidV4": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      }
+    },
     "result.automation.save": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "title": "Automation",
@@ -7430,6 +7527,10 @@
             {
               "type": "object",
               "properties": {
+                "on_failure": {
+                  "description": "`stop` (default) ends the execution as failed; `continue` records the failure for a\nlater `result` condition and goes on.",
+                  "$ref": "#/$defs/AutomationStepFailure"
+                },
                 "type": {
                   "type": "string",
                   "const": "call"
@@ -7560,6 +7661,23 @@
                         },
                         "args": {
                           "$ref": "#/$defs/VisualInteractInput"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "args"
+                      ]
+                    },
+                    {
+                      "description": "Observes the screen when the step runs, finds the first node that matches, and acts on it\nthrough that fresh observation, so a saved Automation never holds a stale reference.",
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "const": "element"
+                        },
+                        "args": {
+                          "$ref": "#/$defs/AutomationElementInput"
                         }
                       },
                       "required": [
@@ -7781,6 +7899,51 @@
             "operator"
           ]
         },
+        "AutomationElementInput": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "description": "`text` and `description` match exactly, `text_contains` matches part of the text or the\ndescription, and `resource_id` matches the full id or the part after `:id/`.",
+              "$ref": "#/$defs/ElementMatch"
+            },
+            "operation": {
+              "$ref": "#/$defs/ElementOperation"
+            },
+            "text": {
+              "description": "The text to enter; required for `operation: text` and rejected otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "wait_ms": {
+              "description": "How long to keep observing for the element before the step fails with NOT_FOUND.",
+              "type": "integer",
+              "format": "uint64",
+              "default": 10000,
+              "maximum": 60000,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "by",
+            "value"
+          ]
+        },
+        "AutomationStepFailure": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "continue"
+          ]
+        },
         "AutomationTrigger": {
           "oneOf": [
             {
@@ -7926,10 +8089,19 @@
           ]
         },
         "ConditionSource": {
-          "type": "string",
-          "enum": [
-            "state",
-            "trigger"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "state",
+                "trigger"
+              ]
+            },
+            {
+              "description": "The outcome of the Call visited last in this execution: `succeeded`, `error_code` when it\nfailed, and `exit_code` when it ran a command.",
+              "type": "string",
+              "const": "result"
+            }
           ]
         },
         "DnsRecordType": {
@@ -7937,6 +8109,23 @@
           "enum": [
             "A",
             "AAAA"
+          ]
+        },
+        "ElementMatch": {
+          "type": "string",
+          "enum": [
+            "text",
+            "text_contains",
+            "description",
+            "resource_id"
+          ]
+        },
+        "ElementOperation": {
+          "type": "string",
+          "enum": [
+            "tap",
+            "long_press",
+            "text"
           ]
         },
         "FileTarget": {
@@ -8608,6 +8797,10 @@
             {
               "type": "object",
               "properties": {
+                "on_failure": {
+                  "description": "`stop` (default) ends the execution as failed; `continue` records the failure for a\nlater `result` condition and goes on.",
+                  "$ref": "#/$defs/AutomationStepFailure"
+                },
                 "type": {
                   "type": "string",
                   "const": "call"
@@ -8738,6 +8931,23 @@
                         },
                         "args": {
                           "$ref": "#/$defs/VisualInteractInput"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "args"
+                      ]
+                    },
+                    {
+                      "description": "Observes the screen when the step runs, finds the first node that matches, and acts on it\nthrough that fresh observation, so a saved Automation never holds a stale reference.",
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string",
+                          "const": "element"
+                        },
+                        "args": {
+                          "$ref": "#/$defs/AutomationElementInput"
                         }
                       },
                       "required": [
@@ -8959,6 +9169,51 @@
             "operator"
           ]
         },
+        "AutomationElementInput": {
+          "type": "object",
+          "properties": {
+            "by": {
+              "description": "`text` and `description` match exactly, `text_contains` matches part of the text or the\ndescription, and `resource_id` matches the full id or the part after `:id/`.",
+              "$ref": "#/$defs/ElementMatch"
+            },
+            "operation": {
+              "$ref": "#/$defs/ElementOperation"
+            },
+            "text": {
+              "description": "The text to enter; required for `operation: text` and rejected otherwise.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "wait_ms": {
+              "description": "How long to keep observing for the element before the step fails with NOT_FOUND.",
+              "type": "integer",
+              "format": "uint64",
+              "default": 10000,
+              "maximum": 60000,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "by",
+            "value"
+          ]
+        },
+        "AutomationStepFailure": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "continue"
+          ]
+        },
         "AutomationTrigger": {
           "oneOf": [
             {
@@ -9104,10 +9359,19 @@
           ]
         },
         "ConditionSource": {
-          "type": "string",
-          "enum": [
-            "state",
-            "trigger"
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "state",
+                "trigger"
+              ]
+            },
+            {
+              "description": "The outcome of the Call visited last in this execution: `succeeded`, `error_code` when it\nfailed, and `exit_code` when it ran a command.",
+              "type": "string",
+              "const": "result"
+            }
           ]
         },
         "DnsRecordType": {
@@ -9115,6 +9379,23 @@
           "enum": [
             "A",
             "AAAA"
+          ]
+        },
+        "ElementMatch": {
+          "type": "string",
+          "enum": [
+            "text",
+            "text_contains",
+            "description",
+            "resource_id"
+          ]
+        },
+        "ElementOperation": {
+          "type": "string",
+          "enum": [
+            "tap",
+            "long_press",
+            "text"
           ]
         },
         "FileTarget": {
@@ -12957,6 +13238,7 @@
           "type": "string",
           "enum": [
             "heic",
+            "jpeg",
             "png"
           ]
         },
@@ -12988,20 +13270,16 @@
             "bottom"
           ]
         },
-        "True": {
-          "type": "boolean",
-          "const": true
-        },
         "UuidV4": {
           "type": "string",
           "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
         "VisualInteractFact": {
-          "description": "What the caller may address in this observation before it expires. A coordinate target is bound to\nthe display identity and the observation's lifetime; a node target additionally needs a node ref, and\ncarries a scene fingerprint that the device can still report as changed. As everywhere else in this\nresult, an absent reason means the capability is available.",
+          "description": "What the caller may address in this observation before it expires. Coordinate and node targets are\nboth bound to the observed scene. As everywhere else in this result, an absent reason means the\ncapability is available.",
           "type": "object",
           "properties": {
             "coordinate": {
-              "$ref": "#/$defs/True"
+              "type": "boolean"
             },
             "node_unavailable_reason": {
               "type": [
@@ -13171,6 +13449,7 @@
           "type": "string",
           "enum": [
             "heic",
+            "jpeg",
             "png"
           ]
         }

@@ -19,6 +19,17 @@ val releaseConfig = Properties().apply {
     rootProject.file("release-config.properties").inputStream().use(::load)
 }
 
+/** The one product version; the APK, both module.prop files and the Rust workspace carry it. */
+val productVersionName = providers.gradleProperty("droidbridgeVersionName").get()
+val productVersionCode = providers.gradleProperty("droidbridgeVersionCode").get().toInt()
+val rustWorkspaceVersion = Regex("""(?m)^version = "([^"]+)"""")
+    .find(rootProject.file("rust/Cargo.toml").readText())
+    ?.groupValues
+    ?.get(1)
+check(rustWorkspaceVersion == productVersionName) {
+    "rust/Cargo.toml version $rustWorkspaceVersion does not carry the product version $productVersionName"
+}
+
 fun quoted(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 android {
@@ -31,8 +42,8 @@ android {
         applicationId = "com.droidbridge.android"
         minSdk = 33
         targetSdk = 37
-        versionCode = 3000
-        versionName = "0.3.0"
+        versionCode = productVersionCode
+        versionName = productVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GITHUB_OWNER", quoted(releaseConfig.getProperty("github_owner")))
         buildConfigField("String", "GITHUB_REPO", quoted(releaseConfig.getProperty("github_repo")))
@@ -85,7 +96,6 @@ android {
 
     sourceSets.named("main") {
         jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs").get().asFile)
-        assets.srcDir(layout.buildDirectory.dir("generated/automationDescriptorAssets").get().asFile)
         assets.srcDir(layout.buildDirectory.dir("generated/productInfoAssets").get().asFile)
     }
 }
@@ -168,13 +178,6 @@ val packageRustGuard by tasks.registering(Copy::class) {
 
 tasks.named("preBuild").configure { dependsOn(packageRustGuard) }
 
-// The I1 editor-presentation descriptors ship verbatim; I1 byte-checks this generated artifact.
-val copyAutomationDescriptors by tasks.registering(Copy::class) {
-    from(rootProject.file("tools/fixtures/contract/automation-ui-descriptors.v1.json"))
-    into(layout.buildDirectory.dir("generated/automationDescriptorAssets"))
-}
-
-tasks.named("preBuild").configure { dependsOn(copyAutomationDescriptors) }
 
 // S-UI-017 Licenses and third-party notices ship from the same provenance the release checks use.
 val copyProductInfoAssets by tasks.registering(Copy::class) {
@@ -257,6 +260,9 @@ fun registerMagiskModule(variant: String, debugModule: Boolean) {
         environment("CARGO_TARGET_DIR", rustTargetPath)
     }
     val staging = layout.buildDirectory.dir("generated/magiskModule/$variant")
+    // The staged module carries the product version the APK carries.
+    val stampedVersionName = productVersionName
+    val stampedVersionCode = productVersionCode
     val stageModule = tasks.register<Sync>("stage${capitalized}MagiskModule") {
         dependsOn(buildRust)
         dependsOn(helperJars.values)
@@ -283,17 +289,31 @@ fun registerMagiskModule(variant: String, debugModule: Boolean) {
             }
         }
         into(staging)
-        if (debugModule) {
-            doLast {
-                staging.get().file("module.prop").asFile.writeText(
-                    "id=droidbridge_debug\n" +
-                        "name=DroidBridge Debug\n" +
-                        "version=0.3.0\n" +
-                        "versionCode=3000\n" +
-                        "author=DroidBridge\n" +
-                        "description=DroidBridge debug privileged Android backend\n",
+        val template = rootProject.file("magisk/module.prop")
+        doLast {
+            // The staged module.prop carries the one product version, written with LF endings
+            // because the module ZIP is byte-checked and its scripts are LF-only.
+            val lines = if (debugModule) {
+                listOf(
+                    "id=droidbridge_debug",
+                    "name=DroidBridge Debug",
+                    "version=",
+                    "versionCode=",
+                    "author=DroidBridge",
+                    "description=DroidBridge debug privileged Android backend",
                 )
+            } else {
+                template.readLines()
             }
+            val stamped = lines.map { line ->
+                when {
+                    line.startsWith("version=") -> "version=$stampedVersionName"
+                    line.startsWith("versionCode=") -> "versionCode=$stampedVersionCode"
+                    else -> line
+                }
+            }
+            staging.get().file("module.prop").asFile
+                .writeText(stamped.joinToString("\n", postfix = "\n"))
         }
     }
     tasks.register<Zip>("assemble${capitalized}MagiskModule") {

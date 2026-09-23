@@ -1,5 +1,6 @@
 package com.droidbridge.android.ui.tasks
 
+import com.droidbridge.android.product.runtime.PublicResult
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
@@ -17,12 +18,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemColors
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -38,17 +38,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.droidbridge.android.R
-import com.droidbridge.android.product.tasks.TaskFilter
 import com.droidbridge.android.product.tasks.TaskPresentation
 import com.droidbridge.android.product.tasks.TaskRepository
-import com.droidbridge.android.product.tasks.TaskResult
 import com.droidbridge.android.product.tasks.TaskSnapshot
 import com.droidbridge.android.product.tasks.TaskSummary
 import com.droidbridge.android.ui.common.RefreshIndicator
 import com.droidbridge.android.ui.common.RouteContent
 import com.droidbridge.android.ui.common.routeContent
 import com.droidbridge.android.ui.common.showsRefresh
-import com.droidbridge.android.ui.common.RouteEmpty
 import com.droidbridge.android.ui.common.RouteError
 import com.droidbridge.android.ui.common.RouteLoading
 import java.time.ZoneId
@@ -57,41 +54,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-data class TaskListUiState(
-    val filter: TaskFilter = TaskFilter.Active,
-    val rows: List<TaskSummary>? = null,
-    val loadFailed: Boolean = false,
-    val refreshing: Boolean = false,
-)
-
-class TaskListViewModel(private val repository: TaskRepository) : ViewModel() {
-    private val mutableState = MutableStateFlow(TaskListUiState())
-    val state: StateFlow<TaskListUiState> = mutableState.asStateFlow()
-
-    fun refresh() = load(mutableState.value.filter)
-
-    /** A new filter is a new query, so its first projection is loaded from the owner again. */
-    fun setFilter(filter: TaskFilter) {
-        if (filter == mutableState.value.filter) return
-        mutableState.value = TaskListUiState(filter = filter)
-        load(filter)
-    }
-
-    private fun load(filter: TaskFilter) {
-        mutableState.update { it.copy(refreshing = true) }
-        viewModelScope.launch {
-            val listed = repository.list(filter)
-            mutableState.update { current ->
-                if (current.filter != filter) return@update current
-                when (listed) {
-                    is TaskResult.Success -> current.copy(rows = listed.value, loadFailed = false, refreshing = false)
-                    is TaskResult.Failure -> current.copy(loadFailed = current.rows == null, refreshing = false)
-                }
-            }
-        }
-    }
-}
 
 data class TaskDetailUiState(
     val snapshot: TaskSnapshot? = null,
@@ -112,14 +74,17 @@ class TaskDetailViewModel(
 
     fun cancel() = apply { repository.cancel(taskId) }
 
-    private fun apply(read: suspend () -> TaskResult<TaskSnapshot>) {
+    /** Leaving is consumed once: an exiting entry can compose again and must not pop twice. */
+    fun consumeNotFound() = mutableState.update { it.copy(notFound = false) }
+
+    private fun apply(read: suspend () -> PublicResult<TaskSnapshot>) {
         mutableState.update { it.copy(refreshing = true, mutationFailed = false) }
         viewModelScope.launch {
             val result = read()
             mutableState.update { current ->
                 when (result) {
-                    is TaskResult.Success -> TaskDetailUiState(snapshot = result.value)
-                    is TaskResult.Failure -> current.copy(
+                    is PublicResult.Success -> TaskDetailUiState(snapshot = result.value)
+                    is PublicResult.Failure -> current.copy(
                         refreshing = false,
                         notFound = result.error.code == NOT_FOUND,
                         loadFailed = current.snapshot == null,
@@ -136,49 +101,10 @@ class TaskDetailViewModel(
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
-fun TasksRoute(viewModel: TaskListViewModel, openTask: (String) -> Unit) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { viewModel.refresh() }
-    Scaffold(
-        modifier = Modifier.testTag("route:Tasks"),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.nav_tasks)) },
-                actions = { if (showsRefresh(state.rows != null, state.refreshing)) RefreshIndicator("tasks") },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("tasks:filter")) {
-                TaskFilter.entries.forEachIndexed { index, filter ->
-                    SegmentedButton(
-                        selected = state.filter == filter,
-                        onClick = { viewModel.setFilter(filter) },
-                        shape = SegmentedButtonDefaults.itemShape(index, TaskFilter.entries.size),
-                        modifier = Modifier.testTag("tasks:filter:${filter.name.lowercase()}"),
-                    ) { Text(stringResource(filterLabel(filter))) }
-                }
-            }
-            val rows = state.rows
-            Box(Modifier.fillMaxSize()) {
-                when (routeContent(rows != null, state.loadFailed, rows?.isEmpty() == true)) {
-                    RouteContent.Error -> RouteError("tasks", viewModel::refresh)
-                    RouteContent.Loading -> RouteLoading("tasks")
-                    RouteContent.Empty -> RouteEmpty("tasks", R.string.tasks_empty)
-                    RouteContent.Content -> LazyColumn(Modifier.fillMaxSize()) {
-                        items(rows.orEmpty(), key = TaskSummary::taskId) { row -> TaskRow(row) { openTask(row.taskId) } }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TaskRow(row: TaskSummary, open: () -> Unit) {
+internal fun TaskRow(row: TaskSummary, colors: ListItemColors = ListItemDefaults.colors(), open: () -> Unit) {
     ListItem(
-        headlineContent = { Text("${row.tool}.${row.action}") },
+        colors = colors,
+        headlineContent = { Text(taskName(row.tool, row.action)) },
         supportingContent = {
             Column {
                 Text(stringResource(taskStateLabel(row.state)))
@@ -196,7 +122,12 @@ fun TaskDetailRoute(viewModel: TaskDetailViewModel, back: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.refresh() }
     // A missing identity returns to the owning list; no placeholder Task is synthesized.
-    LaunchedEffect(state.notFound) { if (state.notFound) back() }
+    LaunchedEffect(state.notFound) {
+        if (state.notFound) {
+            viewModel.consumeNotFound()
+            back()
+        }
+    }
     Scaffold(
         modifier = Modifier.testTag("route:TaskDetail"),
         topBar = {
@@ -237,13 +168,13 @@ private fun TaskDetailContent(snapshot: TaskSnapshot, mutationFailed: Boolean) {
     LazyColumn(Modifier.fillMaxSize()) {
         item {
             ListItem(
-                headlineContent = { Text("${snapshot.tool}.${snapshot.action}", style = MaterialTheme.typography.titleMedium) },
+                headlineContent = { Text(taskName(snapshot.tool, snapshot.action), style = MaterialTheme.typography.titleMedium) },
                 supportingContent = {
                     Column {
                         Text(stringResource(taskStateLabel(snapshot.state)))
                         snapshot.executionClass?.let { value ->
                             Text(
-                                "${stringResource(R.string.task_detail_execution_class)}  $value",
+                                "${stringResource(R.string.task_detail_execution_class)}  ${executionClassName(value)}",
                                 modifier = Modifier.testTag("task_detail:execution_class"),
                             )
                         }
@@ -293,11 +224,43 @@ private fun instant(value: String): String {
     return TaskPresentation.formatInstant(value, ZoneId.systemDefault(), locale)
 }
 
-@StringRes
-private fun filterLabel(filter: TaskFilter): Int = when (filter) {
-    TaskFilter.All -> R.string.tasks_filter_all
-    TaskFilter.Active -> R.string.tasks_filter_active
-    TaskFilter.Completed -> R.string.tasks_filter_completed
+/** A Task named in words; an operation this build does not know keeps its wire name. */
+@Composable
+internal fun taskName(tool: String, action: String): String =
+    taskNames["$tool.$action"]?.let { stringResource(it) } ?: "$tool.$action"
+
+private val taskNames = mapOf(
+    "context.status" to R.string.task_context_status,
+    "context.catalog" to R.string.task_context_catalog,
+    "filesystem.inspect" to R.string.task_filesystem_inspect,
+    "filesystem.read" to R.string.task_filesystem_read,
+    "filesystem.write" to R.string.task_filesystem_write,
+    "filesystem.manage" to R.string.task_filesystem_manage,
+    "filesystem.download" to R.string.task_filesystem_download,
+    "filesystem.archive" to R.string.task_filesystem_archive,
+    "command.run" to R.string.task_command_run,
+    "network.inspect" to R.string.task_network_inspect,
+    "network.capture" to R.string.task_network_capture,
+    "network.packet" to R.string.task_network_packet,
+    "network.diagnose" to R.string.task_network_diagnose,
+    "visual.observe" to R.string.task_visual_observe,
+    "visual.view" to R.string.task_visual_view,
+    "visual.interact" to R.string.task_visual_interact,
+    "android.package" to R.string.task_android_package,
+    "android.launch" to R.string.task_android_launch,
+    "android.intent" to R.string.task_android_intent,
+    "android.clipboard" to R.string.task_android_clipboard,
+    "android.notification" to R.string.task_android_notification,
+    "automation.execution" to R.string.task_automation_execution,
+)
+
+@Composable
+private fun executionClassName(value: String): String = when (value) {
+    "app" -> stringResource(R.string.execution_class_app)
+    "android_framework" -> stringResource(R.string.execution_class_framework)
+    "shizuku" -> "Shizuku"
+    "magisk" -> "Root"
+    else -> value
 }
 
 @StringRes

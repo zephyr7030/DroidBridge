@@ -1,10 +1,10 @@
 use crate::{
     AdmittedExecution, ArtifactPort, AutomationClock, CapabilityPort, CapabilitySnapshot,
-    ExecutionOutcome,
-    ExecutionPayload, ExecutionPort, ExecutorRecord, HostControlPort, NetworkDefaultChangedEvent,
-    NetworkDefaultEventPlane, NetworkDefaultEventSource, NetworkDefaultSourceRegistration,
-    NetworkDefaultSubscription, NetworkEventDelivery, PersistencePort, RESERVE_FLOOR_BYTES,
-    RETAINED_MUTATION_RECORD_BYTES, RecoveryProof, RetainedMutationRecord, RuntimeState,
+    ExecutionOutcome, ExecutionPayload, ExecutionPort, ExecutorRecord, HostControlPort,
+    NetworkDefaultChangedEvent, NetworkDefaultEventPlane, NetworkDefaultEventSource,
+    NetworkDefaultSourceRegistration, NetworkDefaultSubscription, NetworkEventDelivery,
+    PersistencePort, RESERVE_FLOOR_BYTES, RETAINED_MUTATION_RECORD_BYTES,
+    RETAINED_RESULT_LIMIT_BYTES, RecoveryProof, RetainedMutationRecord, RuntimeState,
     STORE_LIMIT_BYTES, SYNCHRONOUS_RECORD_BYTES, SynchronousExecutionRecord,
     SynchronousExecutionState, TASK_RECORD_BYTES, TaskOrigin, TaskRecord,
 };
@@ -1251,17 +1251,33 @@ where
         if let Some(error) = &mut error {
             error.operation = operation.clone();
         }
+        // This call is answered with the whole result; a replay is answered only from what the
+        // record keeps, and a result over the retention bound is not kept.
+        let answer = match (&result, &error) {
+            (Some(result), _) => Ok(result.clone()),
+            (None, Some(error)) => Err(error.clone()),
+            (None, None) => Err(public_error(ErrorCode::InternalError, &operation, false)),
+        };
+        let (result, retained_bytes) = match result {
+            Some(_) if encoded_bytes > RETAINED_RESULT_LIMIT_BYTES => {
+                // What the record still yields is the replay refusal, so that is what it costs.
+                let refusal = serde_json::to_vec(&unretained_replay_error(&operation))
+                    .map_err(|_| public_error(ErrorCode::InternalError, &operation, false))?;
+                (None, refusal.len() as u64)
+            }
+            result => (result, encoded_bytes),
+        };
         {
             let record = &mut state.synchronous_executions[record_index];
             record.state = record_state;
             record.ended_at = Some(ended_at);
             record.result = result;
             record.error = error;
-            record.terminal_bytes = encoded_bytes;
+            record.terminal_bytes = retained_bytes;
         }
         state.used_bytes = state
             .used_bytes
-            .checked_add(encoded_bytes)
+            .checked_add(retained_bytes)
             .ok_or_else(|| public_error(ErrorCode::ResourceLimit, &operation, false))?;
         state.reserved_bytes = state
             .reserved_bytes
@@ -1271,7 +1287,6 @@ where
             .dedup
             .settle(request_id, terminal_at_ms)
             .map_err(|error| public_error(error.code, &operation, false))?;
-        let terminal = synchronous_result(&state.synchronous_executions[record_index]);
         self.commit(state)
             .map_err(|error| public_error(error.code, &operation, false))?;
         if let Some(sender) = self
@@ -1282,7 +1297,7 @@ where
         {
             let _ = sender.send(());
         }
-        terminal
+        answer
     }
 
     /// Applies one Core-owned state transition under the mutation lock. The transition reports
@@ -1381,11 +1396,19 @@ where
     }
 
     fn commit(&self, mut state: RuntimeState) -> Result<(), DomainError> {
+        let active_tasks = state
+            .tasks
+            .iter()
+            .filter(|task| !task.lifecycle.is_terminal())
+            .count();
         let expected = state.revision;
         state.revision = state.revision.checked_add(1).ok_or_else(|| {
             DomainError::new(ErrorCode::ResourceLimit, "store revision exhausted")
         })?;
+        let canonical_revision = state.revision;
         self.persistence.compare_and_commit(expected, state)?;
+        self.host_control
+            .task_activity_changed(active_tasks, canonical_revision);
         self.canonical_changes.notify_one();
         Ok(())
     }
@@ -1584,10 +1607,12 @@ fn synchronous_result(
     record: &SynchronousExecutionRecord,
 ) -> Result<serde_json::Value, PublicError> {
     match record.state {
+        // A result over the retention bound answered its own call only: a replay is told so and
+        // must not run the operation a second time under the same request.
         SynchronousExecutionState::Completed => record
             .result
             .clone()
-            .ok_or_else(|| public_error(ErrorCode::InternalError, &record.operation, false)),
+            .ok_or_else(|| unretained_replay_error(&record.operation)),
         SynchronousExecutionState::Failed | SynchronousExecutionState::Interrupted => Err(record
             .error
             .clone()
@@ -1629,6 +1654,18 @@ fn encoded_cancel_terminal_bytes(ended_at: &str, error: &PublicError) -> Result<
             "Task cancellation settlement encoding failed",
         )
     })
+}
+
+/// What a replay of a request whose result was not retained answers with.
+fn unretained_replay_error(operation: &str) -> PublicError {
+    PublicError {
+        message: Some(
+            "This request already ran and its result was too large to keep for replay. Send the \
+             call again as a new request."
+                .to_owned(),
+        ),
+        ..public_error(ErrorCode::ResourceLimit, operation, false)
+    }
 }
 
 fn public_error(code: ErrorCode, operation: &str, retryable: bool) -> PublicError {

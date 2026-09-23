@@ -196,6 +196,7 @@ async fn i10_g03_tool_catalog_is_a_static_table_independent_of_grants() {
             {"name": "save", "automation_compatible": false},
             {"name": "set_enabled", "automation_compatible": false},
             {"name": "delete", "automation_compatible": false},
+            {"name": "run", "automation_compatible": false},
         ])
     );
 

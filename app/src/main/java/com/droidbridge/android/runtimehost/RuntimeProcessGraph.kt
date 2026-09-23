@@ -8,7 +8,6 @@ import com.droidbridge.android.execution.android.AndroidConnectivityAccess
 import com.droidbridge.android.execution.android.AndroidExecutionBridge
 import com.droidbridge.android.execution.android.AndroidExecutionException
 import com.droidbridge.android.execution.android.AndroidExecutionRegistry
-import com.droidbridge.android.execution.android.AndroidHeicCodecProbe
 import com.droidbridge.android.execution.android.AndroidMotherToolAdapter
 import com.droidbridge.android.execution.android.AndroidMotherToolPlatformAccess
 import com.droidbridge.android.execution.android.AndroidExecutionRequest
@@ -25,11 +24,10 @@ import com.droidbridge.android.execution.android.ExactAlarmAdapter
 import com.droidbridge.android.execution.android.NativeAndroidExecutionDispatcher
 import com.droidbridge.android.execution.android.NetworkDefaultCallbackAdapter
 import com.droidbridge.android.execution.android.RegisteredCapabilityState
-import com.droidbridge.android.execution.android.VisualCodecSnapshotAdapter
-import com.droidbridge.android.execution.android.VisualCodecHealth
 import com.droidbridge.android.execution.android.VisualDisplayTracker
 import com.droidbridge.android.execution.android.VisualFrameworkAdapter
 import com.droidbridge.android.execution.android.VisualImageEncoder
+import com.droidbridge.android.execution.android.VisualSceneActivity
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 
@@ -40,6 +38,7 @@ internal class RuntimeProcessGraph(application: Application) {
     val androidExecutionRegistry: AndroidExecutionRegistry
     val visualDisplay: VisualDisplayTracker
     val visualEncoder: VisualImageEncoder
+    val visualSceneActivity = VisualSceneActivity()
     private val shizukuPrimitives = AtomicReference<AndroidExecutionBridge?>(null)
     private val networkDefaultForeground = AtomicReference<((Boolean) -> Unit)?>(null)
     private val networkAttachment = AndroidProcessNetworkAttachment(
@@ -67,9 +66,8 @@ internal class RuntimeProcessGraph(application: Application) {
             AndroidTunnelCredentialCipher(),
             AndroidMcpSettingsFileSystem(),
         )
-        val codecHealth = VisualCodecHealth(AndroidHeicCodecProbe())
         visualDisplay = VisualDisplayTracker(application)
-        visualEncoder = VisualImageEncoder(application, codecHealth)
+        visualEncoder = VisualImageEncoder(application)
         androidExecutionRegistry = AndroidExecutionRegistry { key, state, reason, generation, hasExecutor ->
             if (key == ANDROID_FRAMEWORK_KEY) {
                 state == RegisteredCapabilityState.Available.wireValue &&
@@ -106,13 +104,13 @@ internal class RuntimeProcessGraph(application: Application) {
             ),
             networkDefault,
             ExactAlarmAdapter(exactAlarms, hostController::validatesFence),
-            VisualCodecSnapshotAdapter(codecHealth, hostController::validatesFence),
-            VisualFrameworkAdapter(visualDisplay, visualEncoder, hostController::validatesFence),
+            VisualFrameworkAdapter(visualDisplay, visualEncoder, hostController::validatesFence, visualSceneActivity),
             AndroidMotherToolAdapter(
                 AndroidMotherToolPlatformAccess(application),
                 hostController::validatesFence,
             ),
             shizukuPrimitives::get,
+            { androidExecutionRegistry.executor(ACCESSIBILITY_KEY) },
         )
         NativeAndroidExecutionDispatcher.install(androidExecutionRegistry)
         hostController.setFrameworkReadySink { generation ->
@@ -146,8 +144,13 @@ internal class RuntimeProcessGraph(application: Application) {
         networkDefaultForeground.set(sink)
     }
 
+    fun setTaskActivitySink(sink: ((Long) -> Unit)?) {
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(sink)
+    }
+
     private companion object {
         const val ANDROID_FRAMEWORK_KEY = "android.framework"
+        const val ACCESSIBILITY_KEY = "visual.accessibility"
         const val DEBUG_PACKAGE_SUFFIX = ".debug"
         const val MCP_STABLE_PORT = 8765
         const val MCP_DEBUG_PORT = 18765
@@ -159,9 +162,11 @@ internal class RuntimeProcessGraph(application: Application) {
             AndroidPrimitive.NetworkDefaultUnsubscribe,
             AndroidPrimitive.AlarmSchedule,
             AndroidPrimitive.AlarmCancel,
-            AndroidPrimitive.VisualCodecSnapshot,
+            AndroidPrimitive.VisualDisplaySnapshot,
             AndroidPrimitive.AccessibilityObserve,
-            AndroidPrimitive.VisualFrameEncode,
+            AndroidPrimitive.AccessibilityNodeAction,
+            AndroidPrimitive.AccessibilityGesture,
+            AndroidPrimitive.AccessibilityText,
             AndroidPrimitive.VisualImageTransform,
             AndroidPrimitive.PackageInspect,
             AndroidPrimitive.LaunchActivity,
@@ -188,10 +193,10 @@ private class RoutedAndroidExecution(
     private val network: AndroidExecutionBridge,
     private val networkDefault: AndroidExecutionBridge,
     private val exactAlarm: AndroidExecutionBridge,
-    private val visualCodec: AndroidExecutionBridge,
     private val visualFramework: AndroidExecutionBridge,
     private val motherTool: AndroidExecutionBridge,
     private val shizuku: () -> AndroidExecutionBridge?,
+    private val accessibility: () -> AndroidExecutionBridge?,
 ) : AndroidExecutionBridge {
     override suspend fun execute(request: AndroidExecutionRequest): AndroidExecutionResult =
         when (request.primitive) {
@@ -206,12 +211,18 @@ private class RoutedAndroidExecution(
             AndroidPrimitive.AlarmSchedule,
             AndroidPrimitive.AlarmCancel,
             -> exactAlarm.execute(request)
-            AndroidPrimitive.VisualCodecSnapshot,
-            -> visualCodec.execute(request)
-            AndroidPrimitive.AccessibilityObserve,
-            AndroidPrimitive.VisualFrameEncode,
+            AndroidPrimitive.VisualDisplaySnapshot,
             AndroidPrimitive.VisualImageTransform,
             -> visualFramework.execute(request)
+            // The accessibility service registers its own executor when the user enables it, so the
+            // observation reaches the component that owns the node handles rather than the
+            // framework adapter that only reads the display.
+            AndroidPrimitive.AccessibilityObserve,
+            AndroidPrimitive.AccessibilityNodeAction,
+            AndroidPrimitive.AccessibilityGesture,
+            AndroidPrimitive.AccessibilityText,
+            -> (accessibility() ?: throw AndroidExecutionException(CAPABILITY_UNAVAILABLE))
+                .execute(request)
             AndroidPrimitive.PackageInspect,
             AndroidPrimitive.LaunchActivity,
             AndroidPrimitive.IntentStart,

@@ -122,7 +122,9 @@ class DroidBridgeAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType in INVALIDATING_EVENTS) invalidateScenes()
+        if (event?.eventType !in INVALIDATING_EVENTS) return
+        invalidateScenes()
+        graph().visualSceneActivity.changed()
     }
 
     override fun onInterrupt() {
@@ -226,7 +228,7 @@ private class AccessibilityVisualAdapter(
                 val admitted = input.expectedDisplay()
                 val current = display.snapshot()
                 if (admitted != current) throw AndroidExecutionException("STALE_AUTHORITY")
-                val root = service.rootInActiveWindow
+                val root = activeRoot()
                     ?: throw AndroidExecutionException("CAPABILITY_UNAVAILABLE")
                 val hierarchy = collectHierarchy(
                     root,
@@ -378,7 +380,7 @@ private class AccessibilityVisualAdapter(
             }
             withTimeout(ACTION_TIMEOUT_MS) {
                 withContext(Dispatchers.Main.immediate) {
-                    val root = service.rootInActiveWindow
+                    val root = activeRoot()
                         ?: throw AndroidExecutionException("CAPABILITY_UNAVAILABLE")
                     try {
                         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
@@ -411,11 +413,9 @@ private class AccessibilityVisualAdapter(
     private suspend fun gesture(request: AndroidExecutionRequest): AndroidExecutionResult {
         val input = request.payloadObject()
         if (input.keys != GESTURE_KEYS) throw AndroidExecutionException("INVALID_ARGUMENT")
-        // A coordinate gesture is bound to the display the caller observed, not to the scene it observed:
-        // the page may repaint (its own text updates per call) while the coordinate keeps its meaning.
-        // The observation's lifetime is enforced by the runtime that admitted this interaction.
         val admitted = input.expectedDisplay()
-        if (display.snapshot() != admitted) throw AndroidExecutionException("STALE_REFERENCE")
+        val observationId = input.requiredString("observation_id")
+        val proof = input.sceneProof()
         val operation = input.requiredString("operation")
         val fromX = input.requiredInt("from_x")
         val fromY = input.requiredInt("from_y")
@@ -442,6 +442,13 @@ private class AccessibilityVisualAdapter(
         val timeout = minOf(duration + 5_000, 15_000)
         return withTimeout(timeout) {
             withContext(Dispatchers.Main.immediate) {
+                val deadline = SystemClock.elapsedRealtime() + ACTION_TIMEOUT_MS
+                if (display.snapshot() != admitted ||
+                    !scenes.matches(observationId, proof) ||
+                    !validateScene(null, proof, deadline)
+                ) {
+                    throw AndroidExecutionException("STALE_REFERENCE")
+                }
                 val path = Path().apply {
                     moveTo(fromX.toFloat(), fromY.toFloat())
                     if (operation == "swipe") {
@@ -469,7 +476,7 @@ private class AccessibilityVisualAdapter(
         ) {
             return false
         }
-        val root = service.rootInActiveWindow ?: return false
+        val root = activeRoot() ?: return false
         val fresh = collectHierarchy(root, deadline)
         return try {
             fresh.windowId == proof.windowId && fresh.sha256 == proof.hierarchySha256
@@ -501,6 +508,17 @@ private class AccessibilityVisualAdapter(
             if (!accepted && continuation.isActive) {
                 continuation.resumeWithException(AndroidExecutionException("IO_ERROR"))
             }
+        }
+    }
+
+    private fun activeRoot(): AccessibilityNodeInfo? {
+        service.rootInActiveWindow?.let { return it }
+        val windows = service.windows
+        return try {
+            windows.firstOrNull { it.isActive }?.root
+                ?: windows.firstOrNull { it.isFocused }?.root
+        } finally {
+            windows.forEach { window -> runCatching { window.recycle() } }
         }
     }
 
@@ -544,8 +562,8 @@ private class AccessibilityVisualAdapter(
             "display_generation", "proof",
         )
         val GESTURE_KEYS = setOf(
-            "operation", "from_x", "from_y", "to_x", "to_y",
-            "duration_ms", "display", "display_generation",
+            "observation_id", "operation", "from_x", "from_y", "to_x", "to_y",
+            "duration_ms", "display", "display_generation", "proof",
         )
     }
 }

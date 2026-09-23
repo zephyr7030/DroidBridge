@@ -81,6 +81,14 @@ internal class AndroidExecutionRegistry(
         return entry.executor.takeIf { entry.generation == generation }
     }
 
+    /**
+     * The executor currently registered under [key], whatever generation it holds. A companion
+     * call carries the fence of the execution it was admitted for, not a capability generation,
+     * so the primitive's own identity selects the executor and the fence still settles staleness.
+     */
+    @Synchronized
+    fun executor(key: String): AndroidExecutionBridge? = entries[key]?.executor
+
     @Synchronized
     fun executor(primitive: AndroidPrimitive, generation: Long): AndroidExecutionBridge? {
         val entry = primitiveEntries[primitive]?.get(generation) ?: return null

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -23,8 +24,70 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class I8CmdDeviceGateTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context: Context
-        get() = InstrumentationRegistry.getInstrumentation().targetContext
+        get() = instrumentation.targetContext
+
+    @Test
+    fun I8_CMD_G00_activeTaskKeepsTheServiceForegroundAfterTheClientLeaves() {
+        var taskId: String? = null
+        val initial = bindRuntime()
+        try {
+            awaitAppGuard(initial.runtime)
+            val accepted = submit(
+                initial.runtime,
+                commandRequest(
+                    commandInput(SLEEP_COMMAND, "app")
+                        .put("as_task", true)
+                        .put("timeout_ms", 150_000),
+                ),
+            )
+            assertEquals(accepted.toString(), "success", accepted.getString("outcome"))
+            val admittedTaskId = accepted.getJSONObject("result").getString("task_id")
+            taskId = admittedTaskId
+            awaitTaskState(initial.runtime, admittedTaskId, setOf("running"))
+        } finally {
+            context.unbindService(initial.connection)
+        }
+
+        try {
+            val deadline = SystemClock.elapsedRealtime() + FOREGROUND_DEADLINE_MS
+            var latest = ""
+            while (true) {
+                latest = serviceDump()
+                if ("isForeground=true" in latest) break
+                assertTrue("active Task did not keep the Service foreground: $latest", SystemClock.elapsedRealtime() < deadline)
+                SystemClock.sleep(100)
+            }
+        } finally {
+            taskId?.let { activeTask ->
+                val cleanup = bindRuntime()
+                try {
+                    val cancelled = awaitTaskState(
+                        cleanup.runtime,
+                        activeTask,
+                        setOf("cancelled"),
+                        cancel = true,
+                    )
+                    assertEquals("cancelled", cancelled.getString("state"))
+                } finally {
+                    context.unbindService(cleanup.connection)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun I8_CMD_G00_appCommandsDoNotRetainSettlementTimeouts() = withRuntime { runtime ->
+        awaitAppGuard(runtime)
+
+        val result = successResult(runtime, "app", OK_COMMAND)
+        assertTrue(
+            "App command retained a fixed settlement delay: ${result.getLong("duration_ms")} ms",
+            result.getLong("duration_ms") < FAST_COMMAND_DEADLINE_MS,
+        )
+        assertCancelled(runtime, "app")
+    }
 
     /**
      * S-AUTH-CMD-001 gives both host surfaces one public result and error contract. The
@@ -51,6 +114,10 @@ class I8CmdDeviceGateTest {
         }
         assertEquals("app", app.getString("execution_class"))
         assertEquals("shizuku", shell.getString("execution_class"))
+        assertTrue(
+            "App command retained a fixed settlement delay: ${app.getLong("duration_ms")} ms",
+            app.getLong("duration_ms") < FAST_COMMAND_DEADLINE_MS,
+        )
 
         val failed = successResult(runtime, "app", FAIL_COMMAND)
         val failedShell = successResult(runtime, "shell", FAIL_COMMAND)
@@ -213,6 +280,7 @@ class I8CmdDeviceGateTest {
         assertEquals(accepted.toString(), "success", accepted.getString("outcome"))
         val taskId = accepted.getJSONObject("result").getString("task_id")
         awaitTaskState(runtime, taskId, setOf("running"))
+        val started = SystemClock.elapsedRealtime()
         val cancelled = awaitTaskState(
             runtime,
             taskId,
@@ -220,6 +288,11 @@ class I8CmdDeviceGateTest {
             cancel = true,
         )
         assertEquals("cancelled", cancelled.getString("state"))
+        assertTrue(
+            "Command cancellation retained a fixed settlement delay: " +
+                "${SystemClock.elapsedRealtime() - started} ms",
+            SystemClock.elapsedRealtime() - started < CANCEL_SETTLEMENT_DEADLINE_MS,
+        )
     }
 
     private fun awaitTaskState(
@@ -319,6 +392,22 @@ class I8CmdDeviceGateTest {
         }
     }
 
+    private fun awaitAppGuard(runtime: IDroidBridgeRuntime) {
+        val deadline = SystemClock.elapsedRealtime() + ADMISSION_DEADLINE_MS
+        while (true) {
+            val status = submit(runtime, contextStatusRequest())
+            val appGuard = status.optJSONObject("result")
+                ?.optJSONObject("grants")
+                ?.optJSONObject("execution.app_guard")
+                ?.optString("state")
+            if (appGuard == "available") return
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                error("App command guard was not admitted: $status")
+            }
+            SystemClock.sleep(100)
+        }
+    }
+
     private fun fixtureAdmitted(status: JSONObject, fixture: String): Boolean {
         val result = status.optJSONObject("result") ?: return false
         val host = result.optJSONObject("runtime")?.optString("host")
@@ -361,7 +450,12 @@ class I8CmdDeviceGateTest {
         return JSONObject(requireNotNull(response).toString(Charsets.UTF_8))
     }
 
-    private fun withRuntime(block: (IDroidBridgeRuntime) -> Unit) {
+    private data class RuntimeBinding(
+        val runtime: IDroidBridgeRuntime,
+        val connection: ServiceConnection,
+    )
+
+    private fun bindRuntime(): RuntimeBinding {
         val connected = CountDownLatch(1)
         var runtime: IDroidBridgeRuntime? = null
         val connection = object : ServiceConnection {
@@ -372,18 +466,24 @@ class I8CmdDeviceGateTest {
 
             override fun onServiceDisconnected(name: ComponentName) = Unit
         }
-        val intent = Intent().setComponent(
-            ComponentName(
-                context.packageName,
-                "com.droidbridge.android.runtimehost.DroidBridgeService",
-            ),
-        )
+        val intent = Intent().setComponent(ComponentName(context.packageName, RUNTIME_SERVICE))
         assertTrue(context.bindService(intent, connection, Context.BIND_AUTO_CREATE))
+        assertTrue(connected.await(10, TimeUnit.SECONDS))
+        return RuntimeBinding(requireNotNull(runtime), connection)
+    }
+
+    private fun serviceDump(): String = ParcelFileDescriptor.AutoCloseInputStream(
+        instrumentation.uiAutomation.executeShellCommand(
+            "dumpsys activity services ${context.packageName}/$RUNTIME_SERVICE",
+        ),
+    ).use { input -> input.readBytes().decodeToString() }
+
+    private fun withRuntime(block: (IDroidBridgeRuntime) -> Unit) {
+        val binding = bindRuntime()
         try {
-            assertTrue(connected.await(10, TimeUnit.SECONDS))
-            block(requireNotNull(runtime))
+            block(binding.runtime)
         } finally {
-            context.unbindService(connection)
+            context.unbindService(binding.connection)
         }
     }
 
@@ -391,6 +491,10 @@ class I8CmdDeviceGateTest {
         const val SHIZUKU_FIXTURE = "shizuku"
         const val MAGISK_FIXTURE = "magisk"
         const val SHELL_UID = "2000"
+        const val FAST_COMMAND_DEADLINE_MS = 1_000L
+        const val CANCEL_SETTLEMENT_DEADLINE_MS = 1_500L
+        const val FOREGROUND_DEADLINE_MS = 10_000L
+        const val RUNTIME_SERVICE = "com.droidbridge.android.runtimehost.DroidBridgeService"
         const val OK_COMMAND = "echo droidbridge-command"
         const val FAIL_COMMAND = "echo failed-semantics; exit 7"
         const val OK_STDOUT = "droidbridge-command"

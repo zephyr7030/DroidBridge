@@ -8,6 +8,9 @@ import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +44,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.droidbridge.android.R
+import com.droidbridge.android.ui.common.RowIcon
 import com.droidbridge.android.client.ClientState
 import com.droidbridge.android.client.DroidBridgeClient
 import com.droidbridge.android.product.home.HomeProjection
@@ -98,6 +102,9 @@ class McpViewModel(private val client: DroidBridgeClient) : ViewModel() {
 
     fun setEnabled(enabled: Boolean) = mutate { client.setMcpEnabled(enabled) }
 
+    /** A notification decision changes a grant the Runtime reports, so it is read again. */
+    fun notificationsDecided() = client.recheck()
+
     fun rotate() = mutate(remask = true) { client.rotateMcpToken() }
 
     fun reveal() {
@@ -137,6 +144,7 @@ fun McpRoute(
     viewModel: McpViewModel,
     notificationsUnavailable: Boolean,
     shouldRequestNotifications: () -> Boolean,
+    finishSetup: (() -> Unit)?,
     back: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -147,6 +155,7 @@ fun McpRoute(
     val copiedText = stringResource(R.string.snackbar_token_copied)
     // Denial still commits enable; the warning row then explains the limited visibility.
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.notificationsDecided()
         viewModel.setEnabled(true)
     }
     Scaffold(
@@ -162,6 +171,15 @@ fun McpRoute(
             )
         },
         snackbarHost = { SnackbarHost(snackbars) },
+        bottomBar = {
+            finishSetup?.let { finish ->
+                Button(
+                    onClick = finish,
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp).heightIn(min = 56.dp)
+                        .testTag("mcp:finish_setup"),
+                ) { Text(stringResource(R.string.action_finish_setup)) }
+            }
+        },
     ) { padding ->
         val settings = state.settings
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -182,6 +200,7 @@ fun McpRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_enable)) },
+                        leadingContent = { RowIcon(R.drawable.ic_power) },
                         trailingContent = {
                             Switch(
                                 checked = settings.enabled,
@@ -202,6 +221,7 @@ fun McpRoute(
                     item {
                         ListItem(
                             headlineContent = { Text(stringResource(R.string.warning_notification_visibility_limited)) },
+                            leadingContent = { RowIcon(R.drawable.ic_notifications_off) },
                             trailingContent = {
                                 TextButton(onClick = {
                                     context.startActivity(
@@ -218,6 +238,7 @@ fun McpRoute(
                     val failedReason = listenerReason(settings)
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_runtime_state)) },
+                        leadingContent = { RowIcon(R.drawable.ic_monitor_heart) },
                         supportingContent = {
                             Text(stringResource(mcpStateLabel(HomeProjection.mcpRow(settings))))
                             if (settings.enabled && settings.listener != McpListenerState.Running) {
@@ -235,6 +256,7 @@ fun McpRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_endpoint)) },
+                        leadingContent = { RowIcon(R.drawable.ic_link) },
                         supportingContent = { Text(settings.endpoint) },
                         modifier = Modifier.testTag("mcp:endpoint"),
                     )
@@ -242,6 +264,7 @@ fun McpRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_protocol_version)) },
+                        leadingContent = { RowIcon(R.drawable.ic_tag) },
                         supportingContent = { Text(settings.protocolVersion) },
                         modifier = Modifier.testTag("mcp:protocol_version"),
                     )
@@ -249,6 +272,7 @@ fun McpRoute(
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_access_token)) },
+                        leadingContent = { RowIcon(R.drawable.ic_key) },
                         supportingContent = { Text(state.revealedToken ?: MASKED_TOKEN, modifier = Modifier.testTag("mcp:token")) },
                     )
                     Row(modifier = Modifier.padding(horizontal = 16.dp)) {

@@ -38,8 +38,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -92,6 +90,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import com.droidbridge.android.AppGraph
+import com.droidbridge.android.DroidBridgeApplication
 import com.droidbridge.android.BuildConfig
 import com.droidbridge.android.R
 import com.droidbridge.android.client.AvailabilityState
@@ -102,6 +101,8 @@ import com.droidbridge.android.client.CapabilityRow
 import com.droidbridge.android.client.CapabilityRowKey
 import com.droidbridge.android.client.CapabilityRowState
 import com.droidbridge.android.client.CapabilityRows
+import com.droidbridge.android.client.SetupSteps
+import com.droidbridge.android.client.settledCapabilityStates
 import com.droidbridge.android.client.ClientState
 import com.droidbridge.android.client.RuntimeReadiness
 import com.droidbridge.android.product.home.HomeMcpRow
@@ -109,6 +110,8 @@ import com.droidbridge.android.ui.setup.DeviceSetup
 import com.droidbridge.android.product.about.ProductInfo
 import com.droidbridge.android.product.settings.AgentType
 import com.droidbridge.android.product.settings.ThemePreference
+import com.droidbridge.android.ui.automation.AutomationDetailRoute
+import com.droidbridge.android.ui.automation.AutomationDetailViewModel
 import com.droidbridge.android.ui.automation.AutomationEditorRoute
 import com.droidbridge.android.ui.automation.AutomationEditorViewModel
 import com.droidbridge.android.ui.automation.AutomationListViewModel
@@ -136,22 +139,21 @@ import com.droidbridge.android.ui.state.AppUiState
 import com.droidbridge.android.ui.state.AppViewModel
 import com.droidbridge.android.ui.tasks.TaskDetailRoute
 import com.droidbridge.android.ui.tasks.TaskDetailViewModel
-import com.droidbridge.android.ui.tasks.TaskListViewModel
-import com.droidbridge.android.ui.tasks.TasksRoute
 import com.droidbridge.android.ui.theme.DroidBridgeTheme
-import com.droidbridge.android.ui.onboarding.AgentChoiceRoute
+import com.droidbridge.android.ui.onboarding.SetupChoiceFacts
+import com.droidbridge.android.ui.onboarding.SetupChoiceRoute
 import com.droidbridge.android.ui.updates.UpdatesRoute
 import com.droidbridge.android.ui.updates.UpdatesViewModel
 import kotlinx.serialization.Serializable
 
 @Serializable data object Welcome : NavKey
-@Serializable data object AgentChoice : NavKey
+@Serializable data object SetupChoice : NavKey
 @Serializable data object Main : NavKey
 @Serializable data object Home : NavKey
 @Serializable data object Capabilities : NavKey
-@Serializable data object Tasks : NavKey
 @Serializable data class TaskDetail(val taskId: String) : NavKey
 @Serializable data object Automations : NavKey
+@Serializable data class AutomationDetail(val automationId: String) : NavKey
 @Serializable data class AutomationEditor(val automationId: String? = null) : NavKey
 @Serializable data object AgentConnections : NavKey
 @Serializable data object MCP : NavKey
@@ -172,20 +174,18 @@ private data class PrimaryDestination(
 )
 
 /**
- * The four swipeable tabs in their spatial order. Settings sits left of Home so every tab is at most
- * two swipes from the Home start page; the order also fixes each tab switch's slide direction.
+ * The swipeable tabs in their spatial order, Home in the middle one swipe from each; the order also
+ * fixes each tab switch's slide direction. Tasks live on Home, running work first.
  */
 private val primaryDestinations = listOf(
     PrimaryDestination(Settings, R.string.nav_settings, R.drawable.ic_nav_settings, "nav:settings"),
     PrimaryDestination(Home, R.string.nav_home, R.drawable.ic_nav_home, "nav:home"),
-    PrimaryDestination(Tasks, R.string.nav_tasks, R.drawable.ic_nav_tasks, "nav:tasks"),
     PrimaryDestination(Automations, R.string.nav_automations, R.drawable.ic_nav_automations, "nav:automations"),
 )
 
 private const val SETTINGS_TAB = 0
 private const val HOME_TAB = 1
-private const val TASKS_TAB = 2
-private const val AUTOMATIONS_TAB = 3
+private const val AUTOMATIONS_TAB = 2
 
 private const val PAGE_SLIDE_MILLIS = 300
 
@@ -221,27 +221,29 @@ private val PopTransition = ContentTransform(
     targetContentZIndex = -1f,
 )
 
-private val settledCapabilityStates = setOf(
-    CapabilityRowState.Ready,
-    CapabilityRowState.Connected,
-    CapabilityRowState.Active,
-    CapabilityRowState.KeptByModule,
-    CapabilityRowState.KeptByShizuku,
-    CapabilityRowState.Confirmed,
-)
+/** A row in one of these states is still being determined; it asks for nothing yet and is not done. */
+private val checkingCapabilityStates = setOf(CapabilityRowState.Starting, CapabilityRowState.Connecting)
 
 /** Device facts read outside the Runtime: they change in system settings, so they are reread on every resume. */
-private data class DeviceSetupState(val background: BackgroundFacts, val rootDetected: Boolean, val moduleAbsent: Boolean)
+private data class DeviceSetupState(
+    val background: BackgroundFacts,
+    val rootDetected: Boolean,
+    val moduleAbsent: Boolean,
+    val shizukuInstalled: Boolean,
+)
 
 @Composable
 private fun rememberDeviceSetup(state: AppUiState): DeviceSetupState {
     val context = LocalContext.current
     val confirmations = state.backgroundConfirmations
-    fun read() = DeviceSetup.backgroundFacts(context, confirmations.autostart, confirmations.recentsLock) to
-        DeviceSetup.rootDetected(context)
+    fun read() = Triple(
+        DeviceSetup.backgroundFacts(context, confirmations.autostart, confirmations.recentsLock),
+        DeviceSetup.rootDetected(context),
+        DeviceSetup.shizukuInstalled(context),
+    )
     var facts by remember(confirmations) { mutableStateOf(read()) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { facts = read() }
-    return DeviceSetupState(facts.first, facts.second, state.moduleAbsent)
+    return DeviceSetupState(facts.first, facts.second, state.moduleAbsent, facts.third)
 }
 
 @Composable
@@ -293,6 +295,16 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
             }
         }
     }
+    // Only during first setup: its last step, the agent page, finishes it and lands on Home.
+    val finishSetup: (() -> Unit)? = if (state.onboardingCompleted != true) {
+        {
+            viewModel.completeOnboarding()
+            backStack.clear()
+            backStack.add(Main)
+        }
+    } else {
+        null
+    }
     // MaintenanceRecovery is the bootstrap root exactly while a maintenance blocker exists.
     LaunchedEffect(state.maintenance?.recoveryRequired) {
         if (state.maintenance?.recoveryRequired == true && backStack.lastOrNull() != MaintenanceRecovery) {
@@ -313,12 +325,25 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
         popTransitionSpec = { PopTransition },
         predictivePopTransitionSpec = { PopTransition },
         entryProvider = entryProvider {
-            entry<Welcome> { WelcomeScreen { navigate(AgentChoice) } }
-            entry<AgentChoice> {
-                AgentChoiceRoute(
-                    selected = state.agentType,
-                    select = viewModel::setAgentType,
-                    continueSetup = { navigate(Capabilities) },
+            entry<Welcome> { WelcomeScreen { navigate(SetupChoice) } }
+            entry<SetupChoice> {
+                val setup = rememberDeviceSetup(state)
+                SetupChoiceRoute(
+                    route = state.setupRoute
+                        ?: CapabilityRows.recommendedRoute(setup.rootDetected, setup.shizukuInstalled),
+                    selectRoute = viewModel::setSetupRoute,
+                    agent = state.agentType,
+                    selectAgent = viewModel::setAgentType,
+                    facts = SetupChoiceFacts(setup.rootDetected, setup.shizukuInstalled),
+                    continueSetup = {
+                        // The chosen route is committed here, so the guide that follows is built
+                        // from a choice that survives leaving the App in the middle of it.
+                        viewModel.setSetupRoute(
+                            state.setupRoute
+                                ?: CapabilityRows.recommendedRoute(setup.rootDetected, setup.shizukuInstalled),
+                        )
+                        navigate(Capabilities)
+                    },
                 ) { backStack.removeLastOrNull() }
             }
             entry<Main>(metadata = mapOf(FULL_WIDTH_ENTRY to true)) {
@@ -333,22 +358,25 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                 val snapshot = (state.clientState as? ClientState.Available)?.snapshot
                 val connectionEnabled = homeState.tunnel?.enabled == true ||
                     homeState.projection?.mcp?.let { it != HomeMcpRow.Off } == true
-                val attention = snapshot?.let { CapabilityRows.project(it, setup.rootDetected, setup.moduleAbsent) }.orEmpty()
-                    .filter { it.action != null && it.state !in settledCapabilityStates } +
+                val rows = snapshot?.let { CapabilityRows.project(it, setup.rootDetected, setup.moduleAbsent) }.orEmpty()
+                val attention = rows.filter { it.action != null && it.state !in settledCapabilityStates } +
                     BackgroundRows.attention(setup.background, BackgroundRows.keeper(snapshot), connectionEnabled)
+                // Without a snapshot nothing has been checked yet, which is not the same as all set.
+                val checking = snapshot == null || rows.any { it.state in checkingCapabilityStates }
                 PrimaryShell(
                     selected = selectedTab,
                     select = { selectedTab = it },
                     backToHome = backStack.size == 1,
-                    taskBadge = homeState.projection?.takeIf { it.activeTaskCount > 0 }?.activeTasks,
                 ) { page ->
                     when (page) {
                         HOME_TAB -> HomeRoute(
                             viewModel = home,
                             clientState = state.clientState,
                             attention = attention,
+                            checking = checking,
                             onCapabilityAction = { row -> row.action?.let { capabilityAction(row.key, it) } },
                             newerVersionAvailable = updateState.newerVersionAvailable,
+                            openTask = { taskId -> backStack.add(TaskDetail(taskId)) },
                         ) { destination ->
                             backStack.add(
                                 when (destination) {
@@ -359,13 +387,10 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                                 },
                             )
                         }
-                        TASKS_TAB -> TasksRoute(viewModel { TaskListViewModel(graph.tasks) }) { taskId ->
-                            backStack.add(TaskDetail(taskId))
-                        }
                         AUTOMATIONS_TAB -> AutomationsRoute(
                             viewModel = viewModel { AutomationListViewModel(graph.automations) },
-                            openEditor = { id -> backStack.add(AutomationEditor(id)) },
-                            openTask = { taskId -> backStack.add(TaskDetail(taskId)) },
+                            openDetail = { id -> backStack.add(AutomationDetail(id)) },
+                            openEditor = { backStack.add(AutomationEditor()) },
                         )
                         SETTINGS_TAB -> SettingsRoute(state.theme, viewModel::setTheme) { destination ->
                             backStack.add(
@@ -385,33 +410,37 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
             }
             entry<Capabilities> {
                 CapabilitiesScreen(state, viewModel, {
-                    // First setup ends where the chosen agent's ingress is configured; later visits just return.
-                    val chosen = state.agentType.takeIf { state.onboardingCompleted != true }
-                    viewModel.completeOnboarding()
-                    when (chosen) {
-                        AgentType.ChatGpt -> {
-                            backStack.clear()
-                            backStack.add(Main)
-                            backStack.add(TunnelSetup)
-                        }
-                        AgentType.LocalMcp -> {
-                            backStack.clear()
-                            backStack.add(Main)
-                            backStack.add(MCP)
-                        }
-                        else -> navigate(Home)
+                    // During first setup the chosen agent's page is the next step, on top of this one,
+                    // so back returns here; setup finishes on that page. Later visits just return, and
+                    // so does a setup left without a Runtime to configure anything against.
+                    val ready = (state.clientState as? ClientState.Available)?.snapshot?.readiness ==
+                        RuntimeReadiness.Ready
+                    val next = when (state.agentType.takeIf { state.onboardingCompleted != true && ready }) {
+                        AgentType.ChatGpt -> TunnelSetup
+                        AgentType.LocalMcp -> MCP
+                        else -> null
+                    }
+                    if (next != null) {
+                        backStack.add(next)
+                    } else {
+                        viewModel.completeOnboarding()
+                        navigate(Home)
                     }
                 }, { backStack.removeLastOrNull() }, navigate)
             }
             entry<TaskDetail> { key ->
                 TaskDetailRoute(viewModel { TaskDetailViewModel(graph.tasks, key.taskId) }) { backStack.removeLastOrNull() }
             }
+            entry<AutomationDetail> { key ->
+                AutomationDetailRoute(
+                    viewModel = viewModel { AutomationDetailViewModel(graph.automations, key.automationId) },
+                    edit = { backStack.add(AutomationEditor(key.automationId)) },
+                    openTask = { taskId -> backStack.add(TaskDetail(taskId)) },
+                ) { backStack.removeLastOrNull() }
+            }
             entry<AutomationEditor> { key ->
                 AutomationEditorRoute(
-                    viewModel = viewModel {
-                        AutomationEditorViewModel(graph.automations, graph.automationDescriptors, key.automationId)
-                    },
-                    catalog = graph.automationDescriptors,
+                    viewModel = viewModel { AutomationEditorViewModel(graph.automations, key.automationId) },
                 ) { backStack.removeLastOrNull() }
             }
             entry<AgentConnections> {
@@ -428,6 +457,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                     notificationsUnavailable = (state.clientState as? ClientState.Available)
                         ?.snapshot?.grants?.get("android.notifications")?.state == AvailabilityState.Unavailable,
                     shouldRequestNotifications = { shouldRequestPostNotifications(context) },
+                    finishSetup = finishSetup,
                 ) { backStack.removeLastOrNull() }
             }
             entry<TunnelSetup> {
@@ -443,6 +473,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                         backStack.clear()
                         backStack.add(Main)
                     },
+                    finishSetup = finishSetup,
                 ) { backStack.removeLastOrNull() }
             }
             entry<Diagnostics> {
@@ -491,7 +522,6 @@ private fun PrimaryShell(
     selected: Int,
     select: (Int) -> Unit,
     backToHome: Boolean,
-    taskBadge: String?,
     page: @Composable (Int) -> Unit,
 ) {
     val pager = rememberPagerState(initialPage = selected) { primaryDestinations.size }
@@ -506,19 +536,11 @@ private fun PrimaryShell(
                     selected = pager.currentPage == index,
                     onClick = { select(index) },
                     icon = {
-                        BadgedBox(
-                            badge = {
-                                if (index == TASKS_TAB && taskBadge != null) {
-                                    Badge(modifier = Modifier.testTag("nav:tasks:badge")) { Text(taskBadge) }
-                                }
-                            },
-                        ) {
-                            Icon(
-                                painterResource(destination.icon),
-                                contentDescription = stringResource(destination.label),
-                                modifier = Modifier.testTag(destination.tag),
-                            )
-                        }
+                        Icon(
+                            painterResource(destination.icon),
+                            contentDescription = stringResource(destination.label),
+                            modifier = Modifier.testTag(destination.tag),
+                        )
                     },
                     label = { Text(stringResource(destination.label)) },
                 )
@@ -613,25 +635,53 @@ private fun CapabilitiesScreen(
             )
         },
         bottomBar = {
+            // A Runtime that cannot start is repaired from Home, so first setup must not lock the
+            // user out of it; only a Runtime that is still starting holds the button.
+            val blocked = state.clientState is ClientState.Unavailable ||
+                snapshot?.readiness == RuntimeReadiness.Unavailable
             Button(
                 onClick = onEnter,
-                enabled = snapshot?.readiness == RuntimeReadiness.Ready,
+                enabled = snapshot?.readiness == RuntimeReadiness.Ready || blocked,
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp).heightIn(min = 56.dp)
                     .testTag("capabilities:enter"),
-            ) { Text(stringResource(R.string.capabilities_enter)) }
+            ) {
+                // During first setup this page is only the environment half of the guide; the agent
+                // it was chosen for is configured next.
+                Text(
+                    stringResource(
+                        when {
+                            blocked -> R.string.capabilities_enter_anyway
+                            state.onboardingCompleted != true -> R.string.action_continue
+                            else -> R.string.capabilities_enter
+                        },
+                    ),
+                )
+            }
         },
     ) { padding ->
-        val background = BackgroundRows.project(setup.background, BackgroundRows.keeper(snapshot))
-        val pending = (rows + background).filter { it.action != null && it.state !in settledCapabilityStates }
+        val projected = BackgroundRows.project(setup.background, BackgroundRows.keeper(snapshot))
+        // First setup asks only for the chosen route's steps; opened later, the page reports every
+        // fact this device has, because a stronger backend may have arrived since.
+        val steps = state.setupRoute
+            ?.takeIf { state.onboardingCompleted != true }
+            ?.let { CapabilityRows.steps(rows, projected, it) }
+            ?: SetupSteps(rows, projected)
+        val access = steps.access
+        val background = steps.background
+        val pending = (access + background).filter { it.action != null && it.state !in settledCapabilityStates }
         // The next step is the first open item; the others stay visible but quieter.
         val next = pending.firstOrNull()?.key
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
             item(key = "capabilities:summary") {
+                // A step that is still starting asks for nothing yet, which is not the same as
+                // being done with it.
+                val waiting = (access + background).any { it.state in checkingCapabilityStates }
                 Text(
-                    if (pending.isEmpty()) {
-                        stringResource(R.string.capabilities_all_set)
-                    } else {
-                        pluralStringResource(R.plurals.capabilities_remaining, pending.size, pending.size)
+                    when {
+                        pending.isNotEmpty() ->
+                            pluralStringResource(R.plurals.capabilities_remaining, pending.size, pending.size)
+                        waiting -> stringResource(R.string.capabilities_checking)
+                        else -> stringResource(R.string.capabilities_all_set)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -639,20 +689,22 @@ private fun CapabilitiesScreen(
                 )
             }
             item(key = "capabilities:section:access") { CapabilitySection(R.string.capabilities_section_access) }
-            itemsIndexed(rows, key = { _, row -> row.key }) { index, row ->
+            itemsIndexed(access, key = { _, row -> row.key }) { index, row ->
                 CapabilityListItem(
                     row = row,
                     refreshing = row.key == CapabilityRowKey.Runtime && available?.refreshing == true,
                     emphasized = row.key == next,
                 ) { row.action?.let { actionHandler(row.key, it) } }
-                if (index != rows.lastIndex) HorizontalDivider()
+                if (index != access.lastIndex) HorizontalDivider()
             }
-            item(key = "capabilities:section:background") { CapabilitySection(R.string.capabilities_section_background) }
-            itemsIndexed(background, key = { _, row -> row.key }) { index, row ->
-                CapabilityListItem(row = row, refreshing = false, emphasized = row.key == next) {
-                    row.action?.let { actionHandler(row.key, it) }
+            if (background.isNotEmpty()) {
+                item(key = "capabilities:section:background") { CapabilitySection(R.string.capabilities_section_background) }
+                itemsIndexed(background, key = { _, row -> row.key }) { index, row ->
+                    CapabilityListItem(row = row, refreshing = false, emphasized = row.key == next) {
+                        row.action?.let { actionHandler(row.key, it) }
+                    }
+                    if (index != background.lastIndex) HorizontalDivider()
                 }
-                if (index != background.lastIndex) HorizontalDivider()
             }
         }
     }
@@ -718,6 +770,9 @@ private fun rememberCapabilityActionHandler(
     navigate: (NavKey) -> Unit,
 ): (CapabilityRowKey, CapabilityAction) -> Unit {
     val context = LocalContext.current
+    val notificationListener = remember(context) {
+        (context.applicationContext as DroidBridgeApplication).requireAppGraph().notificationListener
+    }
     val captureManager = context.getSystemService(MediaProjectionManager::class.java)
     val capture = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
@@ -799,7 +854,7 @@ private fun rememberCapabilityActionHandler(
                 }
             }
             CapabilityAction.OpenSettings -> when {
-                row != CapabilityRowKey.Accessibility -> DeviceSetup.openNotificationAccess(context)
+                row != CapabilityRowKey.Accessibility -> DeviceSetup.openNotificationAccess(context, notificationListener)
                 DeviceSetup.restrictedSettingsApply(context) -> dialog = SetupDialog.RestrictedSettings
                 else -> DeviceSetup.openAccessibility(context)
             }

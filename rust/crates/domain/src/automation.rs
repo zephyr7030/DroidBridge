@@ -2,7 +2,8 @@ use crate::DomainError;
 use contract::{
     AndroidClipboardInput, AndroidLaunchInput, Automation, AutomationAction, AutomationAndroidCall,
     AutomationCommandCall, AutomationCompatibleCall, AutomationFilesystemCall, AutomationId,
-    AutomationNetworkCall, AutomationTrigger, AutomationVisualCall, CommandRunInput,
+    AutomationElementInput, AutomationNetworkCall, AutomationTrigger, AutomationVisualCall,
+    CommandRunInput, ElementOperation,
     ConditionOperator, ExecutionId, FileTarget, FilesystemDownloadInput, FilesystemManageInput,
     NetworkDiagnoseInput, PointTarget, RunAs, ScalarValue, TaskId, VisualInteractInput,
 };
@@ -187,6 +188,31 @@ fn validate_visual(input: &VisualInteractInput) -> Result<(), DomainError> {
     }
 }
 
+/// Longest wait an element step may observe for; the execution budget still bounds the whole run.
+pub const MAX_ELEMENT_WAIT_MS: u64 = 60_000;
+
+fn validate_element(input: &AutomationElementInput) -> Result<(), DomainError> {
+    bounded(&input.value, 1, 1024, "element match value is out of bounds")?;
+    match (input.operation, &input.text) {
+        (ElementOperation::Text, Some(text)) => {
+            bounded(text, 0, 65_536, "element text is out of bounds")?;
+        }
+        (ElementOperation::Text, None) => {
+            return Err(DomainError::invalid("element text operation requires text"));
+        }
+        (_, Some(_)) => {
+            return Err(DomainError::invalid(
+                "element text is accepted only for the text operation",
+            ));
+        }
+        (_, None) => {}
+    }
+    if input.wait_ms > MAX_ELEMENT_WAIT_MS {
+        return Err(DomainError::invalid("element wait is out of bounds"));
+    }
+    Ok(())
+}
+
 fn validate_launch(input: &AndroidLaunchInput) -> Result<(), DomainError> {
     match input {
         AndroidLaunchInput::Package { package_name } => package(package_name),
@@ -226,6 +252,9 @@ fn validate_call(call: &AutomationCompatibleCall) -> Result<(), DomainError> {
         AutomationCompatibleCall::Visual {
             call: AutomationVisualCall::Interact(input),
         } => validate_visual(input),
+        AutomationCompatibleCall::Visual {
+            call: AutomationVisualCall::Element(input),
+        } => validate_element(input),
         AutomationCompatibleCall::Android {
             call: AutomationAndroidCall::Launch(input),
         } => validate_launch(input),
@@ -261,7 +290,7 @@ fn walk(action: &AutomationAction) -> Result<AutomationMetrics, DomainError> {
         expanded_visits: 1,
     };
     let metrics = match action {
-        AutomationAction::Call { call } => {
+        AutomationAction::Call { call, .. } => {
             validate_call(call)?;
             leaf()
         }

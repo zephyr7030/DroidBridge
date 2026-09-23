@@ -318,6 +318,17 @@ pub fn resolve_executor(
         (RuntimeHost::MagiskBackend, ExecutorRequest::Visual(VisualRoute::Transform)) => {
             vec![(facts.app_framework, Provider::AppFramework)]
         }
+        (
+            RuntimeHost::MagiskBackend,
+            ExecutorRequest::Visual(VisualRoute::Hierarchy | VisualRoute::CoordinateInput),
+        ) => vec![
+            (facts.accessibility, Provider::Accessibility),
+            (facts.magisk_native, Provider::MagiskNative),
+        ],
+        (RuntimeHost::MagiskBackend, ExecutorRequest::Visual(VisualRoute::FocusedText)) => vec![
+            (facts.accessibility, Provider::Accessibility),
+            (facts.magisk_native, Provider::MagiskNative),
+        ],
         (RuntimeHost::MagiskBackend, ExecutorRequest::Visual(_)) => {
             vec![(facts.magisk_native, Provider::MagiskNative)]
         }
@@ -328,21 +339,21 @@ pub fn resolve_executor(
             vec![(facts.app_framework, Provider::AppFramework)]
         }
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::Hierarchy)) => vec![
-            (facts.shizuku, Provider::Shizuku),
             (facts.accessibility, Provider::Accessibility),
+            (facts.shizuku, Provider::Shizuku),
         ],
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::Image)) => vec![
             (facts.shizuku, Provider::Shizuku),
             (facts.accessibility, Provider::Accessibility),
             (facts.media_projection, Provider::MediaProjection),
         ],
-        (
-            RuntimeHost::ApkRuntime,
-            ExecutorRequest::Visual(VisualRoute::CoordinateInput | VisualRoute::FocusedText),
-        ) => vec![
-            (facts.shizuku, Provider::Shizuku),
+        (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::CoordinateInput)) => vec![
             (facts.accessibility, Provider::Accessibility),
+            (facts.shizuku, Provider::Shizuku),
         ],
+        (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::FocusedText)) => {
+            vec![(facts.accessibility, Provider::Accessibility)]
+        }
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::KeyInput)) => {
             vec![(facts.shizuku, Provider::Shizuku)]
         }

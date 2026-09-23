@@ -90,7 +90,7 @@ fn i1_g02_catalog_fields_defaults_bounds_and_internal_schemas_are_serializable()
         16
     );
     assert_eq!(serde_json::to_value(TaskState::Created).unwrap(), "created");
-    assert_eq!(metadata["actions"].as_array().unwrap().len(), 29);
+    assert_eq!(metadata["actions"].as_array().unwrap().len(), 30);
     assert_eq!(
         metadata["result_schema_bindings"]
             .as_object()
@@ -148,21 +148,18 @@ fn i1_g02_catalog_fields_defaults_bounds_and_internal_schemas_are_serializable()
 }
 
 #[test]
-fn i1_g03_generated_schemas_and_descriptors_are_byte_deterministic() {
+fn i1_g03_generated_schemas_are_byte_deterministic() {
     let first = generated_artifacts();
     let second = generated_artifacts();
     assert_eq!(first, second);
     assert_eq!(generated_artifact_hashes(), generated_artifact_hashes());
-    assert_eq!(first.len(), 5);
+    assert_eq!(first.len(), 4);
     for artifact in first {
         let path = repository_root()
             .join(GENERATED_ROOT)
             .join(artifact.relative_path);
         assert_eq!(fs::read(path).unwrap(), artifact.bytes);
     }
-    let descriptors = automation_descriptors();
-    validate_automation_descriptors(&descriptors).unwrap();
-    assert_eq!(descriptors.schema_version, 1);
 }
 
 #[test]

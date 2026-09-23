@@ -41,6 +41,8 @@ const NOTIFICATION_TITLE_MAX_BYTES: usize = 256;
 const NOTIFICATION_TEXT_MAX_BYTES: usize = 512;
 const NOTIFICATION_ACTION_TITLE_MAX_BYTES: usize = 512;
 const NOTIFICATION_ACTIONS_MAX: usize = 32;
+const NOTIFICATION_SNAPSHOT_MAX: usize = ANDROID_NOTIFICATION_REF_LIMIT;
+const NOTIFICATION_KEY_MAX_BYTES: usize = 2_048;
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +111,7 @@ pub struct AndroidNotificationRecord {
     pub posted_at_ms: Option<u64>,
     pub title: Option<String>,
     pub text: Option<String>,
+    pub action_count: u32,
     pub actions: Vec<AndroidNotificationActionRecord>,
 }
 
@@ -117,7 +120,7 @@ impl fmt::Debug for AndroidNotificationRecord {
         formatter
             .debug_struct("AndroidNotificationRecord")
             .field("generation", &self.generation)
-            .field("action_count", &self.actions.len())
+            .field("action_count", &self.action_count)
             .finish_non_exhaustive()
     }
 }
@@ -1100,7 +1103,7 @@ fn execute_notification<P: AndroidPrimitivePort>(
             Ok(AndroidNotificationResult::Get {
                 notification: summary(record, notification_ref.clone(), pinned.created_at_ms)?,
                 actions,
-                actions_truncated: record.actions.len() > NOTIFICATION_ACTIONS_MAX,
+                actions_truncated: record.action_count as usize > NOTIFICATION_ACTIONS_MAX,
             })
         }
         AndroidNotificationInput::Dismiss { notification_ref } => {
@@ -1145,11 +1148,35 @@ fn execute_notification<P: AndroidPrimitivePort>(
 fn validated_notifications(
     records: Vec<AndroidNotificationRecord>,
 ) -> Result<Vec<AndroidNotificationRecord>, ExecutionFailure> {
+    if records.len() > NOTIFICATION_SNAPSHOT_MAX {
+        return Err(execution_failure(
+            ErrorCode::ResourceLimit,
+            "notification snapshot exceeds its bound",
+            true,
+        ));
+    }
     let mut keys = BTreeSet::new();
     for record in &records {
         if record.key.is_empty()
+            || record.key.len() > NOTIFICATION_KEY_MAX_BYTES
             || record.generation == 0
             || validate_package_name(&record.package_name).is_err()
+            || record
+                .title
+                .as_ref()
+                .is_some_and(|value| value.len() > NOTIFICATION_TITLE_MAX_BYTES)
+            || record
+                .text
+                .as_ref()
+                .is_some_and(|value| value.len() > NOTIFICATION_TEXT_MAX_BYTES)
+            || record.actions.len() > NOTIFICATION_ACTIONS_MAX + 1
+            || record.action_count < record.actions.len() as u32
+            || record.actions.iter().any(|action| {
+                action
+                    .title
+                    .as_ref()
+                    .is_some_and(|value| value.len() > NOTIFICATION_ACTION_TITLE_MAX_BYTES)
+            })
             || !keys.insert(record.key.as_str())
         {
             return Err(execution_failure(
@@ -1174,7 +1201,7 @@ fn summary(
         posted_at: record.posted_at_ms.map(instant).transpose()?,
         title: bounded_text(record.title.as_deref(), NOTIFICATION_TITLE_MAX_BYTES),
         text: bounded_text(record.text.as_deref(), NOTIFICATION_TEXT_MAX_BYTES),
-        action_count: u32::try_from(record.actions.len()).unwrap_or(u32::MAX),
+        action_count: record.action_count,
     })
 }
 
@@ -1514,6 +1541,7 @@ struct NotificationWire {
     title: Option<String>,
     #[serde(default)]
     text: Option<String>,
+    action_count: u32,
     actions: Vec<NotificationActionWire>,
 }
 
@@ -1592,6 +1620,7 @@ pub fn decode_notification_snapshot(
             posted_at_ms: entry.posted_at_ms,
             title: entry.title,
             text: entry.text,
+            action_count: entry.action_count,
             actions: entry
                 .actions
                 .into_iter()

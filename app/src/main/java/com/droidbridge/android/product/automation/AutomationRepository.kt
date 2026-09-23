@@ -1,10 +1,10 @@
 package com.droidbridge.android.product.automation
 
+import com.droidbridge.android.product.runtime.PublicCalls
+import com.droidbridge.android.product.runtime.PublicError
+import com.droidbridge.android.product.runtime.PublicResult
 import java.util.UUID
-import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -13,21 +13,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-/** A public error exactly as the Runtime returned it; the UI adds no message of its own. */
-data class AutomationError(
-    val code: String,
-    val message: String? = null,
-    val details: JsonObject? = null,
+
+data class AutomationExecutionRow(
+    val taskId: String,
+    val state: String,
+    val triggeredAt: String,
+    val errorCode: String? = null,
 )
 
-sealed interface AutomationResult<out T> {
-    data class Success<T>(val value: T) : AutomationResult<T>
-    data class Failure(val error: AutomationError) : AutomationResult<Nothing>
-}
-
-data class AutomationExecutionRow(val taskId: String, val state: String)
-
-/** One `automation.list` summary; the trigger type is filled from that row's `automation.get`. */
+/** One `automation.list` summary; the trigger is filled from that row's `automation.get`. */
 data class AutomationRow(
     val automationId: String,
     val name: String,
@@ -35,20 +29,29 @@ data class AutomationRow(
     val revision: Long,
     val updatedAt: String,
     val lastExecution: AutomationExecutionRow?,
-    val triggerType: String? = null,
+    val trigger: JsonObject? = null,
 )
+
+/** One saved definition with its newest executions first. */
+data class AutomationDetail(val automation: JsonObject, val history: List<AutomationExecutionRow>) {
+    val automationId: String get() = automation.getValue("automation_id").jsonPrimitive.content
+    val revision: Long get() = requireNotNull(automation.getValue("revision").jsonPrimitive.longOrNull)
+    val enabled: Boolean get() = automation.getValue("enabled").jsonPrimitive.content.toBooleanStrict()
+}
 
 data class BulkDeleteOutcome(val deleted: Int, val failed: Int)
 
 /** The UI's only Automation access: ordinary public `automation.*` requests over the client. */
 class AutomationRepository(
-    private val submit: suspend (ByteArray) -> ByteArray,
-    private val requestIds: () -> String = { UUID.randomUUID().toString() },
+    submit: suspend (ByteArray) -> ByteArray,
+    requestIds: () -> String = { UUID.randomUUID().toString() },
 ) {
-    suspend fun list(): AutomationResult<List<AutomationRow>> =
+    private val calls = PublicCalls(submit, requestIds)
+
+    suspend fun list(): PublicResult<List<AutomationRow>> =
         when (val listed = call("list", buildJsonObject { put("limit", LIST_LIMIT) })) {
-            is AutomationResult.Failure -> listed
-            is AutomationResult.Success -> AutomationResult.Success(
+            is PublicResult.Failure -> listed
+            is PublicResult.Success -> PublicResult.Success(
                 listed.value.getValue("automations").jsonArray.map { element ->
                     val row = element.jsonObject
                     AutomationRow(
@@ -57,34 +60,41 @@ class AutomationRepository(
                         enabled = row.getValue("enabled").jsonPrimitive.content.toBooleanStrict(),
                         revision = requireNotNull(row.getValue("revision").jsonPrimitive.longOrNull),
                         updatedAt = row.string("updated_at"),
-                        lastExecution = row["last_execution"]?.jsonObject?.let { execution ->
-                            AutomationExecutionRow(execution.string("task_id"), execution.string("state"))
-                        },
+                        lastExecution = row["last_execution"]?.jsonObject?.let(::execution),
                     )
                 },
             )
         }
 
-    /** The saved definition of one Automation, or its canonical NOT_FOUND. */
-    suspend fun get(automationId: String): AutomationResult<JsonObject> =
+    /** The saved definition of one Automation and its recent runs, or its canonical NOT_FOUND. */
+    suspend fun get(automationId: String, historyLimit: Int = 1): PublicResult<AutomationDetail> =
         when (val fetched = call("get", buildJsonObject {
             put("automation_id", automationId)
-            put("history_limit", 1)
+            put("history_limit", historyLimit)
         })) {
-            is AutomationResult.Failure -> fetched
-            is AutomationResult.Success -> AutomationResult.Success(fetched.value.getValue("automation").jsonObject)
+            is PublicResult.Failure -> fetched
+            is PublicResult.Success -> PublicResult.Success(
+                AutomationDetail(
+                    automation = fetched.value.getValue("automation").jsonObject,
+                    history = fetched.value.getValue("history").jsonArray.map { execution(it.jsonObject) },
+                ),
+            )
         }
 
-    suspend fun save(input: JsonObject): AutomationResult<JsonObject> = call("save", input)
+    /** Asks for one run now, outside the trigger; it appears in the history once admitted. */
+    suspend fun run(automationId: String): PublicResult<JsonObject> =
+        call("run", buildJsonObject { put("automation_id", automationId) })
 
-    suspend fun setEnabled(row: AutomationRow, enabled: Boolean): AutomationResult<JsonObject> =
+    suspend fun save(input: JsonObject): PublicResult<JsonObject> = call("save", input)
+
+    suspend fun setEnabled(automationId: String, revision: Long, enabled: Boolean): PublicResult<JsonObject> =
         call("set_enabled", buildJsonObject {
-            put("automation_id", row.automationId)
+            put("automation_id", automationId)
             put("enabled", enabled)
-            put("expected_revision", row.revision)
+            put("expected_revision", revision)
         })
 
-    suspend fun delete(automationId: String, expectedRevision: Long): AutomationResult<JsonObject> =
+    suspend fun delete(automationId: String, expectedRevision: Long): PublicResult<JsonObject> =
         call("delete", buildJsonObject {
             put("automation_id", automationId)
             put("expected_revision", expectedRevision)
@@ -95,68 +105,38 @@ class AutomationRepository(
      * item in `(updated_at desc, automation_id desc)` order at that snapshot's revision. A revision
      * conflict is counted as a failure and never retried; nothing is claimed to be atomic.
      */
-    suspend fun deleteAll(): AutomationResult<BulkDeleteOutcome> =
+    suspend fun deleteAll(): PublicResult<BulkDeleteOutcome> =
         when (val snapshot = list()) {
-            is AutomationResult.Failure -> snapshot
-            is AutomationResult.Success -> {
+            is PublicResult.Failure -> snapshot
+            is PublicResult.Success -> {
                 var deleted = 0
                 var failed = 0
                 snapshot.value
                     .sortedWith(compareByDescending<AutomationRow> { it.updatedAt }.thenByDescending { it.automationId })
                     .forEach { row ->
                         when (delete(row.automationId, row.revision)) {
-                            is AutomationResult.Success -> deleted += 1
-                            is AutomationResult.Failure -> failed += 1
+                            is PublicResult.Success -> deleted += 1
+                            is PublicResult.Failure -> failed += 1
                         }
                     }
-                AutomationResult.Success(BulkDeleteOutcome(deleted, failed))
+                PublicResult.Success(BulkDeleteOutcome(deleted, failed))
             }
         }
 
-    private suspend fun call(action: String, input: JsonObject): AutomationResult<JsonObject> {
-        val envelope = buildJsonObject {
-            put("protocol_version", 1)
-            put("request_id", requestIds())
-            put("payload", buildJsonObject {
-                put("tool", "automation")
-                put("action", action)
-                put("input", input)
-            })
-        }
-        val response = try {
-            submit(envelope.toString().encodeToByteArray())
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            return AutomationResult.Failure(AutomationError(RUNTIME_UNAVAILABLE))
-        }
-        val root = try {
-            Json.parseToJsonElement(response.decodeToString()).jsonObject
-        } catch (_: RuntimeException) {
-            return AutomationResult.Failure(AutomationError(PROTOCOL_MISMATCH))
-        }
-        return when ((root["outcome"] as? JsonPrimitive)?.contentOrNull) {
-            "success" -> (root["result"] as? JsonObject)?.let { AutomationResult.Success(it) }
-                ?: AutomationResult.Failure(AutomationError(PROTOCOL_MISMATCH))
-            "error" -> (root["error"] as? JsonObject)?.let { error ->
-                AutomationResult.Failure(
-                    AutomationError(
-                        code = (error["code"] as? JsonPrimitive)?.contentOrNull ?: PROTOCOL_MISMATCH,
-                        message = (error["message"] as? JsonPrimitive)?.contentOrNull,
-                        details = error["details"] as? JsonObject,
-                    ),
-                )
-            } ?: AutomationResult.Failure(AutomationError(PROTOCOL_MISMATCH))
-            else -> AutomationResult.Failure(AutomationError(PROTOCOL_MISMATCH))
-        }
-    }
+    private suspend fun call(action: String, input: JsonObject): PublicResult<JsonObject> =
+        calls.call("automation", action, input)
 
     private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
+
+    private fun execution(execution: JsonObject) = AutomationExecutionRow(
+        taskId = execution.string("task_id"),
+        state = execution.string("state"),
+        triggeredAt = execution.string("triggered_at"),
+        errorCode = execution["error_code"]?.jsonPrimitive?.contentOrNull,
+    )
 
     companion object {
         /** The Contract maximum, so delete-all reloads the complete bounded list. */
         const val LIST_LIMIT = 500
-        const val RUNTIME_UNAVAILABLE = "RUNTIME_UNAVAILABLE"
-        const val PROTOCOL_MISMATCH = "PROTOCOL_MISMATCH"
     }
 }

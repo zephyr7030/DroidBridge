@@ -20,9 +20,15 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 pub const VISUAL_OBSERVATION_LIMIT: usize = 32;
+/// How long after delivered input an observation waits before it starts. The screen answers a tap
+/// or a key a few frames later (a keyboard begins to slide, a page begins to open), so an
+/// observation taken at once would describe the screen before the change and be stale when used.
+/// The device side then waits for the change it can see to settle.
+const INPUT_SETTLE: Duration = Duration::from_millis(300);
 pub const VISUAL_OBSERVATION_TTL_MS: u64 = 300_000;
 /// No node refs were wanted; no node refs exist although nodes were wanted.
 const NODE_REFS_NOT_REQUESTED: &str = "NODES_NOT_REQUESTED";
@@ -137,9 +143,10 @@ pub enum VisualInteractionRequest {
         display: VisualDisplaySnapshot,
         proof: VisualSceneProof,
     },
-    /// A place on the display the caller observed. The observation's own lifetime was settled
-    /// before this request existed, so the display identity and the geometry are the whole request.
+    /// A place on the scene and display the caller observed. Both identities are revalidated by
+    /// the provider immediately before it dispatches input.
     Coordinate {
+        observation_id: UuidV4,
         operation: String,
         from_x: u32,
         from_y: u32,
@@ -147,6 +154,7 @@ pub enum VisualInteractionRequest {
         to_y: Option<u32>,
         duration_ms: Option<u64>,
         display: VisualDisplaySnapshot,
+        proof: VisualSceneProof,
     },
     FocusedText {
         text: String,
@@ -359,6 +367,7 @@ struct VisualObservationCache {
     records: BTreeMap<String, VisualObservationRecord>,
     node_owners: BTreeMap<String, String>,
     image_owners: BTreeMap<String, String>,
+    last_input_at: Option<Instant>,
 }
 
 impl VisualObservationCache {
@@ -536,6 +545,17 @@ where
         ));
     }
     claim.checkpoint().map_err(verified_failure)?;
+    if matches!(envelope.call, VisualCall::Observe(_)) {
+        let since_input = observations
+            .lock()
+            .map_err(|_| internal_visual_lock())?
+            .last_input_at
+            .map(|at| at.elapsed());
+        if let Some(remaining) = since_input.and_then(|since| INPUT_SETTLE.checked_sub(since)) {
+            tokio::time::sleep(remaining).await;
+            claim.checkpoint().map_err(verified_failure)?;
+        }
+    }
     let result = match &envelope.call {
         VisualCall::Observe(input) => execute_observe(
             &artifacts,
@@ -633,7 +653,7 @@ where
             // Complete once the hierarchy is known: a node-less observation keeps this value, an
             // observation that requested nodes has it replaced below with what its node list resolved to.
             interact: VisualInteractFact {
-                coordinate: True,
+                coordinate: false,
                 node_unavailable_reason: Some(NODE_REFS_NOT_REQUESTED.to_owned()),
                 ttl_ms: VISUAL_OBSERVATION_TTL_MS,
             },
@@ -710,7 +730,10 @@ where
             }
         }
         claim.checkpoint().map_err(verified_failure)?;
-        if input.include_nodes {
+        // Every coordinate is scene-bound, even when the caller only requested an image. A
+        // hierarchy source is therefore admitted for every observation; node facts remain hidden
+        // when they were not requested.
+        {
             let source = envelope.hierarchy_source.as_ref().ok_or_else(|| {
                 verified_failure(DomainError::new(
                     ErrorCode::IoError,
@@ -719,41 +742,55 @@ where
             })?;
             source.validate().map_err(verified_failure)?;
             if let Some(reason) = &source.unavailable_reason {
-                result.nodes_unavailable_reason = Some(reason.clone());
+                if input.include_nodes {
+                    result.nodes_unavailable_reason = Some(reason.clone());
+                }
             } else if let Some(source_executor) = &source.executor {
                 if !source_is_current(current, source_executor, VisualRoute::Hierarchy) {
-                    result.nodes_unavailable_reason = Some("STALE_AUTHORITY".to_owned());
+                    if input.include_nodes {
+                        result.nodes_unavailable_reason = Some("STALE_AUTHORITY".to_owned());
+                    }
                 } else {
                     let source_execution = execution_for_source(execution, source_executor);
                     match primitives.observe_hierarchy(
                         &source_execution,
                         &display,
                         &observation_id,
-                        input.max_nodes,
+                        if input.include_nodes {
+                            input.max_nodes
+                        } else {
+                            1
+                        },
                         claim,
                     ) {
                         Ok(hierarchy) => {
                             if let Err(error) =
                                 validate_hierarchy(&hierarchy, &display, source_executor.provider)
                             {
-                                result.nodes_unavailable_reason =
-                                    Some(error_code_token(error.code));
+                                if input.include_nodes {
+                                    result.nodes_unavailable_reason =
+                                        Some(error_code_token(error.code));
+                                }
                             } else {
                                 record.hierarchy_executor = Some(source_executor.clone());
                                 record.proof = Some(hierarchy.proof.clone());
-                                record.node_refs = hierarchy
-                                    .nodes
-                                    .iter()
-                                    .filter_map(|node| node.node_ref.clone())
-                                    .collect();
-                                result.foreground = hierarchy.foreground;
-                                result.nodes = Some(hierarchy.nodes);
-                                result.nodes_truncated = Some(hierarchy.truncated);
+                                if input.include_nodes {
+                                    record.node_refs = hierarchy
+                                        .nodes
+                                        .iter()
+                                        .filter_map(|node| node.node_ref.clone())
+                                        .collect();
+                                    result.foreground = hierarchy.foreground;
+                                    result.nodes = Some(hierarchy.nodes);
+                                    result.nodes_truncated = Some(hierarchy.truncated);
+                                }
                             }
                         }
                         Err(failure) if failure.cleanup_verified => {
-                            result.nodes_unavailable_reason =
-                                Some(error_code_token(failure.error.code));
+                            if input.include_nodes {
+                                result.nodes_unavailable_reason =
+                                    Some(error_code_token(failure.error.code));
+                            }
                         }
                         Err(failure) => return Err(failure),
                     }
@@ -823,11 +860,9 @@ where
                 .metadata(image_ref)
                 .map_err(verified_failure)
                 .and_then(|metadata| {
-                    if metadata
-                        .mime
-                        .as_deref()
-                        .is_none_or(|mime| !matches!(mime, "image/heic" | "image/png"))
-                    {
+                    if metadata.mime.as_deref().is_none_or(|mime| {
+                        !matches!(mime, "image/heic" | "image/jpeg" | "image/png")
+                    }) {
                         return Err(verified_failure(DomainError::invalid(
                             "visual image_ref is not an image artifact",
                         )));
@@ -945,9 +980,15 @@ where
                     .display
                     .clone()
                     .ok_or_else(|| verified_failure(stale_reference()))?;
+                require_observation_executor(&record, execution)?;
+                let proof = record
+                    .proof
+                    .clone()
+                    .ok_or_else(|| verified_failure(stale_reference()))?;
                 validate_point(&display.display, *from_x, *from_y).map_err(verified_failure)?;
                 validate_point(&display.display, *to_x, *to_y).map_err(verified_failure)?;
                 Ok::<_, ExecutionFailure>(VisualInteractionRequest::Coordinate {
+                    observation_id: record.observation_id.clone(),
                     operation: "swipe".to_owned(),
                     from_x: *from_x,
                     from_y: *from_y,
@@ -955,6 +996,7 @@ where
                     to_y: Some(*to_y),
                     duration_ms: Some(*duration_ms),
                     display,
+                    proof,
                 })
             })();
             let request = match built {
@@ -1028,6 +1070,10 @@ where
         unpin_record(observations, &record)?;
     }
     delivered?;
+    observations
+        .lock()
+        .map_err(|_| internal_visual_lock())?
+        .last_input_at = Some(Instant::now());
     serde_json::to_value(VisualInteractResult {
         delivered: True,
         operation: visual_interaction_operation(input).to_owned(),
@@ -1096,15 +1142,19 @@ fn interaction_target(
             y,
         } => {
             let record = pin_observation(observations, observation_id, now_ms)?;
-            // A coordinate is addressed against the display the caller saw, not against the scene: the
-            // observation's own lifetime and the display identity are its whole freshness contract.
             let built = (|| {
+                require_observation_executor(&record, execution)?;
                 let display = record
                     .display
                     .clone()
                     .ok_or_else(|| verified_failure(stale_reference()))?;
+                let proof = record
+                    .proof
+                    .clone()
+                    .ok_or_else(|| verified_failure(stale_reference()))?;
                 validate_point(&display.display, *x, *y).map_err(verified_failure)?;
                 Ok::<_, ExecutionFailure>(VisualInteractionRequest::Coordinate {
+                    observation_id: record.observation_id.clone(),
                     operation: operation.to_owned(),
                     from_x: *x,
                     from_y: *y,
@@ -1112,6 +1162,7 @@ fn interaction_target(
                     to_y: None,
                     duration_ms: None,
                     display,
+                    proof,
                 })
             })();
             match built {
@@ -1165,7 +1216,7 @@ fn interact_fact(
         Some(NODE_REFS_NOT_REQUESTED.to_owned())
     };
     VisualInteractFact {
-        coordinate: True,
+        coordinate: record.proof.is_some() && record.hierarchy_executor.is_some(),
         node_unavailable_reason,
         ttl_ms: VISUAL_OBSERVATION_TTL_MS,
     }
@@ -1203,9 +1254,10 @@ where
             input
                 .include_image
                 .then(|| VisualSourceAdmission::resolve(&capability, VisualRoute::Image)),
-            input
-                .include_nodes
-                .then(|| VisualSourceAdmission::resolve(&capability, VisualRoute::Hierarchy)),
+            Some(VisualSourceAdmission::resolve(
+                &capability,
+                VisualRoute::Hierarchy,
+            )),
         ),
         _ => (None, None),
     };
@@ -1523,6 +1575,9 @@ fn validate_encoded_image(image: &VisualEncodedImage) -> Result<(), DomainError>
     let valid = match image.format {
         ImageFormat::Png => image.bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
         ImageFormat::Heic => image.bytes.len() >= 12 && &image.bytes[4..8] == b"ftyp",
+        ImageFormat::Jpeg => {
+            image.bytes.starts_with(&[0xff, 0xd8]) && image.bytes.ends_with(&[0xff, 0xd9])
+        }
     };
     if !valid {
         return Err(DomainError::new(
@@ -1545,6 +1600,7 @@ fn validate_point(display: &DisplayGeometry, x: u32, y: u32) -> Result<(), Domai
 const fn image_mime(format: ImageFormat) -> &'static str {
     match format {
         ImageFormat::Heic => "image/heic",
+        ImageFormat::Jpeg => "image/jpeg",
         ImageFormat::Png => "image/png",
     }
 }

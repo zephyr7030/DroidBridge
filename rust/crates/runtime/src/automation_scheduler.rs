@@ -114,6 +114,8 @@ where
         let mut armed: Option<Option<String>> = None;
         let mut network: Option<NetworkDefaultSubscription> = None;
         loop {
+            // Requested runs need no time wake: the request itself is the canonical change.
+            self.admit_requested_runs().await?;
             if let Some(projection) = projection {
                 let next = self.wake().await?;
                 if armed.as_ref() != Some(&next) {
@@ -138,6 +140,19 @@ where
                 },
             }
         }
+    }
+
+    /// Admits every run requested outside a trigger and starts each admitted execution.
+    pub async fn admit_requested_runs(&self) -> Result<(), DomainError> {
+        for automation_id in self.core.requested_automation_runs().await? {
+            let (timestamp, _) = self.clock.wall()?;
+            let admission = self
+                .core
+                .admit_requested_run(&automation_id, timestamp)
+                .await?;
+            self.start(admission);
+        }
+        Ok(())
     }
 
     /// Publishes `runtime.ready:{host,host_generation}` once for this ready Runtime instance.

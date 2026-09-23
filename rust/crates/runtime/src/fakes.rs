@@ -372,6 +372,7 @@ pub struct FakeHostControl {
     recovery: Arc<Mutex<RecoveryProof>>,
     capabilities: Option<FakeCapabilities>,
     cleanup_reports: Arc<Mutex<Vec<(domain::AdmissionFence, UuidV4)>>>,
+    task_activity: Arc<Mutex<Vec<usize>>>,
 }
 
 impl FakeHostControl {
@@ -380,6 +381,7 @@ impl FakeHostControl {
             recovery: Arc::new(Mutex::new(recovery)),
             capabilities: None,
             cleanup_reports: Arc::default(),
+            task_activity: Arc::default(),
         }
     }
 
@@ -392,6 +394,13 @@ impl FakeHostControl {
         self.cleanup_reports
             .lock()
             .expect("fake cleanup reports lock")
+            .clone()
+    }
+
+    pub fn task_activity(&self) -> Vec<usize> {
+        self.task_activity
+            .lock()
+            .expect("fake Task activity lock")
             .clone()
     }
 
@@ -436,5 +445,12 @@ impl HostControlPort for FakeHostControl {
             self.withdraw_readiness()?;
         }
         Ok(proof)
+    }
+
+    fn task_activity_changed(&self, active_tasks: usize, _canonical_revision: u64) {
+        self.task_activity
+            .lock()
+            .expect("fake Task activity lock")
+            .push(active_tasks);
     }
 }

@@ -513,7 +513,7 @@ pub fn filesystem_executor_request<P: FilesystemPreflightPort>(
             "Runtime is not ready for filesystem execution",
         ));
     }
-    let Some((route, target_type)) = filesystem_route(call)? else {
+    let Some((route, target_type, shared_storage)) = filesystem_route(call)? else {
         return Ok(None);
     };
     let mut facts = capability.resolver_facts;
@@ -523,15 +523,23 @@ pub fn filesystem_executor_request<P: FilesystemPreflightPort>(
         == contract::RuntimeHost::ApkRuntime
         && target_type == FileTargetType::Path
     {
-        let app = preflight.preflight(FilesystemCandidate::App, call)?;
-        let shizuku = if app == Preflight::Positive
-            || facts.shizuku != contract::CapabilityState::Available
-        {
-            Preflight::Unknown
+        if shared_storage {
+            if facts.shizuku == contract::CapabilityState::Available {
+                (Preflight::Unknown, Preflight::Positive)
+            } else {
+                (Preflight::Positive, Preflight::Unknown)
+            }
         } else {
-            preflight.preflight(FilesystemCandidate::Shizuku, call)?
-        };
-        (app, shizuku)
+            let app = preflight.preflight(FilesystemCandidate::App, call)?;
+            let shizuku = if app == Preflight::Positive
+                || facts.shizuku != contract::CapabilityState::Available
+            {
+                Preflight::Unknown
+            } else {
+                preflight.preflight(FilesystemCandidate::Shizuku, call)?
+            };
+            (app, shizuku)
+        }
     } else {
         (Preflight::Unknown, Preflight::Unknown)
     };
@@ -553,7 +561,7 @@ pub fn filesystem_executor_request<P: FilesystemPreflightPort>(
 
 fn filesystem_route(
     call: &contract::FilesystemCall,
-) -> Result<Option<(FilesystemRoute, FileTargetType)>, DomainError> {
+) -> Result<Option<(FilesystemRoute, FileTargetType, bool)>, DomainError> {
     use contract::FilesystemCall;
     let (route, targets): (FilesystemRoute, Vec<&FileTarget>) = match call {
         FilesystemCall::Inspect(input) => (FilesystemRoute::InspectOrRead, vec![&input.target]),
@@ -626,7 +634,33 @@ fn filesystem_route(
             "content URI supports only inspect and read in protocol v1",
         ));
     }
-    Ok(Some((route, target_type)))
+    let shared_storage = if target_type == FileTargetType::Path {
+        let mut namespaces = targets
+            .iter()
+            .map(|target| is_android_shared_storage_path(&target.value));
+        let first = namespaces.next().unwrap_or(false);
+        if namespaces.any(|shared| shared != first) {
+            return Err(DomainError::new(
+                ErrorCode::Unsupported,
+                "filesystem action cannot cross Android storage authorities",
+            ));
+        }
+        first
+    } else {
+        false
+    };
+    Ok(Some((route, target_type, shared_storage)))
+}
+
+fn is_android_shared_storage_path(value: &str) -> bool {
+    let path = value.trim_end_matches('/');
+    path == "/sdcard"
+        || path.starts_with("/sdcard/")
+        || path == "/storage/self/primary"
+        || path.starts_with("/storage/self/primary/")
+        || path
+            .strip_prefix("/storage/emulated/")
+            .is_some_and(|suffix| !suffix.is_empty())
 }
 
 pub fn filesystem_preflight(call: &contract::FilesystemCall) -> Result<Preflight, DomainError> {
@@ -2753,12 +2787,14 @@ fn copy_local_directory_to_primitive<P: FilesystemPrimitivePort>(
     Ok(())
 }
 
-/// Copies one local directory tree onto another, entry metadata included, so a tree that was
-/// extracted elsewhere becomes the tree that publication renames into place.
+/// Copies one local directory tree onto another before publication. Android shared storage
+/// synthesizes modes and rejects chmod, so permissions are retained only on filesystems that own
+/// real Unix mode bits.
 fn copy_local_directory(
     source: &Path,
     destination: &Path,
     claim: Option<&crate::LocalExecutionClaim>,
+    preserve_permissions: bool,
 ) -> Result<(), DomainError> {
     let mut children = fs::read_dir(source)
         .map_err(fs_error)?
@@ -2772,8 +2808,16 @@ fn copy_local_directory(
         let metadata = child.metadata().map_err(fs_error)?;
         if metadata.is_dir() {
             fs::create_dir(&destination_child).map_err(fs_error)?;
-            fs::set_permissions(&destination_child, metadata.permissions()).map_err(fs_error)?;
-            copy_local_directory(&source_child, &destination_child, claim)?;
+            if preserve_permissions {
+                fs::set_permissions(&destination_child, metadata.permissions())
+                    .map_err(fs_error)?;
+            }
+            copy_local_directory(
+                &source_child,
+                &destination_child,
+                claim,
+                preserve_permissions,
+            )?;
         } else if metadata.is_file() {
             let mut input = File::open(&source_child).map_err(fs_error)?;
             let mut output = OpenOptions::new()
@@ -2789,7 +2833,10 @@ fn copy_local_directory(
                     std::io::copy(&mut input, &mut output).map_err(fs_error)?;
                 }
             }
-            fs::set_permissions(&destination_child, metadata.permissions()).map_err(fs_error)?;
+            if preserve_permissions {
+                fs::set_permissions(&destination_child, metadata.permissions())
+                    .map_err(fs_error)?;
+            }
             output.sync_all().map_err(fs_error)?;
         } else {
             return Err(DomainError::new(
@@ -3558,6 +3605,7 @@ impl<A: ArtifactPort> FilesystemKernel<A> {
         require_path(&target)?;
         require_path(&destination)?;
         let source_path = normalize_absolute_path(&target.value)?;
+        let preserve_permissions = !is_android_shared_storage_path(&destination.value);
         let destination_path = normalize_absolute_path(&destination.value)?;
         let mut file = File::open(source_path).map_err(fs_error)?;
         let format = detect_archive(&mut file)?;
@@ -3592,8 +3640,10 @@ impl<A: ArtifactPort> FilesystemKernel<A> {
         let published = (|| {
             fs::create_dir(&publication).map_err(fs_error)?;
             publication_owned = true;
-            fs::set_permissions(&publication, publication_mode).map_err(fs_error)?;
-            copy_local_directory(&stage, &publication, claim)?;
+            if preserve_permissions {
+                fs::set_permissions(&publication, publication_mode).map_err(fs_error)?;
+            }
+            copy_local_directory(&stage, &publication, claim, preserve_permissions)?;
             cancellation_checkpoint(claim)?;
             publish_with_claim(claim, || {
                 publish_directory(&publication, &destination_path, overwrite)

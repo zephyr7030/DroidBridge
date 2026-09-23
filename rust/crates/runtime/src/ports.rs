@@ -424,4 +424,9 @@ pub trait HostControlPort: Send + Sync {
     fn prepare(&self) -> Result<(), DomainError>;
     fn activate(&self, fence: &AdmissionFence) -> Result<(), DomainError>;
     fn recover(&self, old_instance_id: &UuidV4) -> Result<RecoveryProof, DomainError>;
+
+    /// Publishes the authoritative count of non-terminal Tasks after a canonical commit. This is
+    /// a derived platform projection: it cannot recast an already committed mutation as failed,
+    /// and an implementation must report its own delivery failure. Headless hosts do nothing.
+    fn task_activity_changed(&self, _active_tasks: usize, _canonical_revision: u64) {}
 }

@@ -73,6 +73,19 @@ impl HostControlPort for AppHostControl {
         }
         Ok(self.recovery_proof)
     }
+
+    fn task_activity_changed(&self, active_tasks: usize, canonical_revision: u64) {
+        if let Err(error) = crate::publish_task_activity(
+            active_tasks,
+            canonical_revision,
+            &self.lease.live().runtime_epoch,
+        ) {
+            eprintln!(
+                "DroidBridge task activity projection failed: {:?}",
+                error.code
+            );
+        }
+    }
 }
 
 pub(super) fn start_host(
@@ -333,6 +346,24 @@ fn activate_app_host(
         Some(pending) => verification.complete_takeover(&store, pending, &ProcFacts)?,
         None => lease,
     };
+    let committed = store.load(&lease)?;
+    let active_tasks = committed
+        .tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.state,
+                contract::TaskState::Created
+                    | contract::TaskState::Queued
+                    | contract::TaskState::Running
+            )
+        })
+        .count();
+    crate::publish_task_activity(
+        active_tasks,
+        committed.store_revision,
+        &lease.live().runtime_epoch,
+    )?;
     publish_ready_host(
         slot,
         base,

@@ -81,6 +81,32 @@ where
         .await
     }
 
+    /// Automations with a run requested outside their trigger.
+    pub async fn requested_automation_runs(&self) -> Result<Vec<AutomationId>, DomainError> {
+        self.read_state(|state| {
+            Ok(state
+                .automations
+                .iter()
+                .filter(|record| record.run_requested_at.is_some())
+                .map(|record| record.automation.automation_id.clone())
+                .collect())
+        })
+        .await
+    }
+
+    /// Admits one requested run and clears the request in the same commit. Its trigger facts
+    /// carry `manual: true`, and the trigger's due is left as it was.
+    pub async fn admit_requested_run(
+        &self,
+        automation_id: &AutomationId,
+        timestamp: String,
+    ) -> Result<AutomationAdmission, DomainError> {
+        self.state_transition(|state, capability| {
+            admit_requested(state, capability, automation_id, &timestamp)
+        })
+        .await
+    }
+
     pub async fn start_automation_execution(
         &self,
         execution_id: &ExecutionId,
@@ -243,6 +269,42 @@ fn admit_due(
     };
     state.automations[index].next_due_at = next_due_at;
     Ok((AutomationAdmission::Admitted(Box::new(execution)), true))
+}
+
+fn admit_requested(
+    state: &mut RuntimeState,
+    capability: &CapabilitySnapshot,
+    automation_id: &AutomationId,
+    timestamp: &str,
+) -> Result<(AutomationAdmission, bool), DomainError> {
+    let Some(index) = state.automations.iter().position(|record| {
+        &record.automation.automation_id == automation_id && record.run_requested_at.is_some()
+    }) else {
+        return Ok((AutomationAdmission::NotDue, false));
+    };
+    state.automations[index].run_requested_at = None;
+    if state.automations[index].deleted_at.is_some() {
+        return Ok((AutomationAdmission::NotDue, true));
+    }
+    if state.automations[index].active_execution_id.is_some() {
+        return Ok((AutomationAdmission::BusyDropped, true));
+    }
+    let facts = BTreeMap::from([("manual".to_owned(), ScalarValue::Boolean(true))]);
+    match create_execution(
+        state,
+        capability,
+        index,
+        timestamp.to_owned(),
+        timestamp,
+        facts,
+    ) {
+        Ok(execution) => Ok((AutomationAdmission::Admitted(Box::new(execution)), true)),
+        // The request is consumed either way; a rejected run is reported by the scheduler count.
+        Err(error) if admission_rejection(&error) => {
+            Ok((AutomationAdmission::Rejected(error), true))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Admits one enabled event-triggered Automation whose registered name and exact matches accept

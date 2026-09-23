@@ -4,19 +4,18 @@ use crate::{
     companion::{CompanionPort, CompanionPrimitiveRequest, CompanionPrimitiveResult},
 };
 use contract::{
-    DisplayGeometry, ErrorCode, FileTarget, FileTargetType, FilesystemCall, FilesystemInspectInput,
-    ImageFormat, Region,
+    ErrorCode, FileTarget, FileTargetType, FilesystemCall, FilesystemInspectInput, ImageFormat,
+    Region,
 };
 use domain::{DomainError, ExecutorRequest, Preflight, VisualRoute};
 use runtime::{
     AdmittedExecution, AndroidFrameworkFilesystemPort, CapabilityPort, ExecutionFailure,
     ExecutorRecord, FilesystemCandidate, FilesystemFrameworkPort, FilesystemPreflightPort,
     LocalExecutionClaim, ProviderToken, VisualDisplaySnapshot, VisualEncodedImage,
-    VisualHierarchySnapshot, VisualInteractionRequest, VisualPrimitivePort, VisualSceneProof,
-    VisualTransformSource, input_text_delivers, meta_modifier_keys, parse_privileged_hierarchy,
+    VisualHierarchySnapshot, VisualInteractionRequest, VisualPrimitivePort, VisualTransformSource,
+    input_text_delivers, meta_modifier_keys, parse_privileged_hierarchy,
     resolve_filesystem_executor,
 };
-use serde::Deserialize;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -32,7 +31,6 @@ use std::{
 const COMPANION_POLL: Duration = Duration::from_millis(25);
 const COMPANION_DEADLINE: Duration = Duration::from_millis(15_000);
 const PNG_LIMIT: usize = 8 * 1_024 * 1_024;
-const RAW_PAYLOAD_LIMIT: u64 = 67_108_864;
 
 #[derive(Clone)]
 pub(crate) struct MagiskVisualPort<C> {
@@ -86,13 +84,13 @@ where
         let framework = self.framework_execution(execution).map_err(clean_failure)?;
         let result = self.companion_call(
             &framework,
-            "AccessibilityObserve",
+            "VisualDisplaySnapshot",
             serde_json::json!({"operation":"display"}),
             Vec::new(),
             claim,
         )?;
         require_no_descriptors(&result)?;
-        decode_display(result.payload).map_err(clean_failure)
+        runtime::decode_display_value(result.payload).map_err(clean_failure)
     }
 
     fn capture_image(
@@ -112,11 +110,29 @@ where
         &self,
         execution: &AdmittedExecution,
         display: &VisualDisplaySnapshot,
-        _observation_id: &contract::UuidV4,
+        observation_id: &contract::UuidV4,
         max_nodes: u32,
         claim: &LocalExecutionClaim,
     ) -> Result<VisualHierarchySnapshot, ExecutionFailure> {
         claim.checkpoint().map_err(clean_failure)?;
+        if execution.executor.provider == ProviderToken::Accessibility {
+            let result = self.companion_call(
+                execution,
+                "AccessibilityObserve",
+                serde_json::json!({
+                    "operation":"hierarchy",
+                    "observation_id":observation_id,
+                    "max_nodes":max_nodes,
+                    "display":display.display,
+                    "display_generation":display.display_generation,
+                }),
+                Vec::new(),
+                claim,
+            )?;
+            require_no_descriptors(&result)?;
+            return runtime::decode_accessibility_hierarchy_value(result.payload)
+                .map_err(clean_failure);
+        }
         if execution.executor.provider != ProviderToken::MagiskNative {
             return Err(stale("Magisk hierarchy admission has a different provider"));
         }
@@ -182,7 +198,8 @@ where
                         "text":text,
                         "display":display.display,
                         "display_generation":display.display_generation,
-                        "proof":accessibility_proof(proof)?,
+                        "proof":runtime::accessibility_proof(&proof)
+                    .ok_or_else(|| stale("Accessibility interaction proof is invalid"))?,
                     }),
                     claim,
                 )
@@ -190,6 +207,7 @@ where
             (
                 ProviderToken::Accessibility,
                 VisualInteractionRequest::Coordinate {
+                    observation_id,
                     operation,
                     from_x,
                     from_y,
@@ -197,19 +215,26 @@ where
                     to_y,
                     duration_ms,
                     display,
+                    proof,
                 },
-            ) => self.companion_delivered(
-                execution,
-                "AccessibilityGesture",
-                serde_json::json!({
-                    "operation":operation,
-                    "from_x":from_x,"from_y":from_y,"to_x":to_x,"to_y":to_y,
-                    "duration_ms":duration_ms,
-                    "display":display.display,
-                    "display_generation":display.display_generation,
-                }),
-                claim,
-            ),
+            ) => {
+                let proof = runtime::accessibility_proof(&proof)
+                    .ok_or_else(|| stale("Accessibility interaction proof is invalid"))?;
+                self.companion_delivered(
+                    execution,
+                    "AccessibilityGesture",
+                    serde_json::json!({
+                        "observation_id":observation_id,
+                        "operation":operation,
+                        "from_x":from_x,"from_y":from_y,"to_x":to_x,"to_y":to_y,
+                        "duration_ms":duration_ms,
+                        "display":display.display,
+                        "display_generation":display.display_generation,
+                        "proof":proof,
+                    }),
+                    claim,
+                )
+            }
             (ProviderToken::Accessibility, VisualInteractionRequest::FocusedText { text }) => self
                 .companion_delivered(
                     execution,
@@ -233,42 +258,7 @@ where
         display: &VisualDisplaySnapshot,
         claim: &LocalExecutionClaim,
     ) -> Result<VisualEncodedImage, ExecutionFailure> {
-        let framework = self.framework_execution(execution).map_err(clean_failure)?;
-        let snapshot = self.companion_call(
-            &framework,
-            "VisualCodecSnapshot",
-            serde_json::json!({
-                "width":display.display.width,
-                "height":display.display.height,
-                "source":"privileged_raw",
-            }),
-            Vec::new(),
-            claim,
-        )?;
-        require_no_descriptors(&snapshot)?;
-        let snapshot: CodecSnapshot = serde_json::from_value(snapshot.payload).map_err(|_| {
-            clean_failure(DomainError::new(
-                ErrorCode::IoError,
-                "visual codec snapshot is invalid",
-            ))
-        })?;
-        match snapshot.hardware_heic.as_str() {
-            "unavailable" if snapshot.codec_generation > 0 && snapshot.reason.is_some() => {
-                self.capture_png(execution, display, claim)
-            }
-            "available" if snapshot.codec_generation > 0 && snapshot.reason.is_none() => self
-                .capture_raw(
-                    execution,
-                    &framework,
-                    display,
-                    snapshot.codec_generation,
-                    claim,
-                ),
-            _ => Err(clean_failure(DomainError::new(
-                ErrorCode::IoError,
-                "visual codec snapshot is invalid",
-            ))),
-        }
+        self.capture_png(execution, display, claim)
     }
 
     fn capture_png(
@@ -291,94 +281,27 @@ where
                 claim,
             )?;
             let bytes = temporary.read_bounded(PNG_LIMIT).map_err(clean_failure)?;
-            let (width, height) = png_dimensions(&bytes).map_err(clean_failure)?;
+            let (width, height) = runtime::png_dimensions(&bytes).map_err(clean_failure)?;
             if width != display.display.width || height != display.display.height {
                 return Err(clean_failure(DomainError::new(
                     ErrorCode::StaleAuthority,
                     "PNG screen capture display changed",
                 )));
             }
-            Ok(VisualEncodedImage {
-                bytes,
-                format: ImageFormat::Png,
-                width,
-                height,
-                captured_display: Some(display.clone()),
-            })
-        })();
-        finish_temp(temporary, result)
-    }
-
-    fn capture_raw(
-        &self,
-        execution: &AdmittedExecution,
-        framework: &AdmittedExecution,
-        display: &VisualDisplaySnapshot,
-        codec_generation: u64,
-        claim: &LocalExecutionClaim,
-    ) -> Result<VisualEncodedImage, ExecutionFailure> {
-        let mut temporary = ExecutionTempFile::create(
-            &self.canonical_base,
-            &execution.execution_id,
-            "visual-frame.raw",
-        )
-        .map_err(clean_failure)?;
-        let result = (|| {
-            self.root.run_visual(
-                &execution.execution_id,
-                VisualRootPrimitive::ScreenshotRaw,
-                Some(temporary.writer()),
-                claim,
-            )?;
-            let metadata = temporary.raw_metadata().map_err(clean_failure)?;
-            if metadata.width != display.display.width || metadata.height != display.display.height
-            {
-                return Err(clean_failure(DomainError::new(
-                    ErrorCode::StaleAuthority,
-                    "raw screen capture display changed",
-                )));
-            }
+            let framework = self.framework_execution(execution).map_err(clean_failure)?;
             let reader = temporary.read_only().map_err(clean_failure)?;
-            let heic = self.companion_image(
-                framework,
-                "VisualFrameEncode",
-                serde_json::json!({
-                    "width":metadata.width,
-                    "height":metadata.height,
-                    "pixel_format":metadata.pixel_format,
-                    "colorspace":metadata.colorspace,
-                    "requested":"heic",
-                    "codec_generation":codec_generation,
-                }),
-                Some(("visual_raw_frame", reader)),
+            let encoded = self.companion_image(
+                &framework,
+                "VisualImageTransform",
+                serde_json::json!({"region":null}),
+                Some(("visual_source_image", reader)),
                 false,
                 claim,
-            );
-            let encoded = match heic {
-                Ok(image) => image,
-                Err(failure) if failure.cleanup_verified => {
-                    let reader = temporary.read_only().map_err(clean_failure)?;
-                    self.companion_image(
-                        framework,
-                        "VisualFrameEncode",
-                        serde_json::json!({
-                            "width":metadata.width,
-                            "height":metadata.height,
-                            "pixel_format":metadata.pixel_format,
-                            "colorspace":metadata.colorspace,
-                            "requested":"png",
-                        }),
-                        Some(("visual_raw_frame", reader)),
-                        false,
-                        claim,
-                    )?
-                }
-                Err(failure) => return Err(failure),
-            };
-            if encoded.width != metadata.width || encoded.height != metadata.height {
+            )?;
+            if encoded.width != width || encoded.height != height {
                 return Err(clean_failure(DomainError::new(
                     ErrorCode::IoError,
-                    "raw frame encoder changed image dimensions",
+                    "compressed screen capture changed image dimensions",
                 )));
             }
             Ok(VisualEncodedImage {
@@ -430,6 +353,7 @@ where
     ) -> Result<(), ExecutionFailure> {
         let primitive = match request {
             VisualInteractionRequest::Coordinate {
+                observation_id: _,
                 operation,
                 from_x,
                 from_y,
@@ -437,15 +361,25 @@ where
                 to_y,
                 duration_ms,
                 display,
+                proof,
             } => {
-                // A coordinate gesture is bound to the display the caller saw, never to the scene: the
-                // page may have repainted since (its own text updates on every call), while the
-                // coordinate still means the same place. The observation's lifetime is the runtime's fact.
                 let current_display = self.display(execution, claim)?;
                 if current_display != display {
                     return Err(clean_failure(DomainError::new(
                         ErrorCode::StaleReference,
                         "privileged visual display changed",
+                    )));
+                }
+                let current_scene = parse_privileged_hierarchy(
+                    &self.dump_hierarchy(execution, claim)?,
+                    1,
+                    display.clone(),
+                )
+                .map_err(clean_failure)?;
+                if current_scene.proof != proof {
+                    return Err(clean_failure(DomainError::new(
+                        ErrorCode::StaleReference,
+                        "privileged visual scene changed",
                     )));
                 }
                 match operation.as_str() {
@@ -689,13 +623,7 @@ where
                 "visual image result descriptor set is invalid",
             )));
         }
-        let wire: EncodedImageWire = serde_json::from_value(result.payload).map_err(|_| {
-            clean_failure(DomainError::new(
-                ErrorCode::IoError,
-                "visual image result is invalid",
-            ))
-        })?;
-        validate_image_metadata(&wire).map_err(clean_failure)?;
+        let wire = runtime::decode_encoded_image_value(result.payload).map_err(clean_failure)?;
         let (_, descriptor) = result.descriptors.remove(0);
         let mut file = File::from(descriptor);
         let bytes = read_bounded(&mut file, PNG_LIMIT).map_err(clean_failure)?;
@@ -705,9 +633,9 @@ where
                 "visual image size is invalid",
             )));
         }
-        validate_encoded_bytes(wire.format, &bytes).map_err(clean_failure)?;
+        runtime::validate_encoded_bytes(wire.format, &bytes).map_err(clean_failure)?;
         if wire.format == ImageFormat::Png
-            && png_dimensions(&bytes).map_err(clean_failure)? != (wire.width, wire.height)
+            && runtime::png_dimensions(&bytes).map_err(clean_failure)? != (wire.width, wire.height)
         {
             return Err(clean_failure(DomainError::new(
                 ErrorCode::IoError,
@@ -808,43 +736,6 @@ impl FilesystemPreflightPort for MagiskVisualPathPreflight {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CodecSnapshot {
-    hardware_heic: String,
-    codec_generation: u64,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DisplayWire {
-    display: DisplayGeometry,
-    display_generation: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EncodedImageWire {
-    format: ImageFormat,
-    mime: String,
-    size: u64,
-    width: u32,
-    height: u32,
-    #[serde(default)]
-    display: Option<DisplayGeometry>,
-    #[serde(default)]
-    display_generation: Option<u64>,
-}
-
-struct RawMetadata {
-    width: u32,
-    height: u32,
-    pixel_format: u32,
-    colorspace: u32,
-}
-
 struct ExecutionTempFile {
     path: PathBuf,
     writer: Option<File>,
@@ -885,43 +776,6 @@ impl ExecutionTempFile {
         })?;
         writer.seek(SeekFrom::Start(0)).map_err(io_error)?;
         read_bounded(&mut writer, limit)
-    }
-
-    fn raw_metadata(&mut self) -> Result<RawMetadata, DomainError> {
-        let mut writer = self.writer.take().ok_or_else(|| {
-            DomainError::new(ErrorCode::InternalError, "visual raw writer is closed")
-        })?;
-        let size = writer.metadata().map_err(io_error)?.len();
-        writer.seek(SeekFrom::Start(0)).map_err(io_error)?;
-        let mut header = [0u8; 16];
-        writer.read_exact(&mut header).map_err(io_error)?;
-        let width = u32::from_le_bytes(header[0..4].try_into().unwrap());
-        let height = u32::from_le_bytes(header[4..8].try_into().unwrap());
-        let pixel_format = u32::from_le_bytes(header[8..12].try_into().unwrap());
-        let colorspace = u32::from_le_bytes(header[12..16].try_into().unwrap());
-        let bytes_per_pixel = match pixel_format {
-            1 | 2 | 5 => 4u64,
-            3 => 3,
-            4 => 2,
-            _ => return Err(io_domain("raw pixel format is unsupported")),
-        };
-        if width == 0 || height == 0 || width > 16_384 || height > 16_384 || colorspace > 2 {
-            return Err(io_domain("raw frame header is invalid"));
-        }
-        let payload = u64::from(width)
-            .checked_mul(u64::from(height))
-            .and_then(|value| value.checked_mul(bytes_per_pixel))
-            .ok_or_else(|| DomainError::new(ErrorCode::ResourceLimit, "raw frame size overflow"))?;
-        if payload > RAW_PAYLOAD_LIMIT || size != payload + 16 {
-            return Err(io_domain("raw frame length is invalid"));
-        }
-        fs::set_permissions(&self.path, fs::Permissions::from_mode(0o400)).map_err(io_error)?;
-        Ok(RawMetadata {
-            width,
-            height,
-            pixel_format,
-            colorspace,
-        })
     }
 
     fn read_only(&self) -> Result<File, DomainError> {
@@ -974,32 +828,6 @@ fn finish_temp<T>(
     }
 }
 
-fn decode_display(payload: serde_json::Value) -> Result<VisualDisplaySnapshot, DomainError> {
-    let wire: DisplayWire = serde_json::from_value(payload)
-        .map_err(|_| io_domain("visual display result is invalid"))?;
-    Ok(VisualDisplaySnapshot {
-        display: wire.display,
-        display_generation: wire.display_generation,
-    })
-}
-
-fn accessibility_proof(proof: VisualSceneProof) -> Result<serde_json::Value, ExecutionFailure> {
-    match proof {
-        VisualSceneProof::Accessibility {
-            component_generation,
-            window_id,
-            scene_revision,
-            hierarchy_sha256,
-        } => Ok(serde_json::json!({
-            "component_generation":component_generation,
-            "window_id":window_id,
-            "scene_revision":scene_revision,
-            "hierarchy_sha256":hierarchy_sha256,
-        })),
-        _ => Err(stale("Accessibility interaction proof is invalid")),
-    }
-}
-
 fn require_no_descriptors(result: &CompanionPrimitiveResult) -> Result<(), ExecutionFailure> {
     if result.descriptors.is_empty() {
         Ok(())
@@ -1008,57 +836,6 @@ fn require_no_descriptors(result: &CompanionPrimitiveResult) -> Result<(), Execu
             "Android visual result returned unexpected descriptors",
         )))
     }
-}
-
-fn validate_image_metadata(wire: &EncodedImageWire) -> Result<(), DomainError> {
-    let expected_mime = match wire.format {
-        ImageFormat::Heic => "image/heic",
-        ImageFormat::Png => "image/png",
-    };
-    if wire.mime != expected_mime
-        || wire.size == 0
-        || wire.size > PNG_LIMIT as u64
-        || wire.width == 0
-        || wire.height == 0
-        || wire.width > 16_384
-        || wire.height > 16_384
-    {
-        return Err(io_domain("visual image metadata is invalid"));
-    }
-    Ok(())
-}
-
-fn validate_encoded_bytes(format: ImageFormat, bytes: &[u8]) -> Result<(), DomainError> {
-    match format {
-        ImageFormat::Png => png_dimensions(bytes).map(|_| ()),
-        ImageFormat::Heic
-            if bytes.len() >= 12
-                && &bytes[4..8] == b"ftyp"
-                && matches!(
-                    &bytes[8..12],
-                    b"heic" | b"heix" | b"hevc" | b"hevx" | b"mif1"
-                ) =>
-        {
-            Ok(())
-        }
-        ImageFormat::Heic => Err(io_domain("HEIC image bytes are invalid")),
-    }
-}
-
-fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), DomainError> {
-    if bytes.len() < 24
-        || &bytes[..8] != b"\x89PNG\r\n\x1a\n"
-        || &bytes[8..12] != 13u32.to_be_bytes().as_slice()
-        || &bytes[12..16] != b"IHDR"
-    {
-        return Err(io_domain("PNG image bytes are invalid"));
-    }
-    let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
-    let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
-    if width == 0 || height == 0 {
-        return Err(io_domain("PNG dimensions are invalid"));
-    }
-    Ok((width, height))
 }
 
 fn open_no_follow(path: &Path) -> Result<File, DomainError> {

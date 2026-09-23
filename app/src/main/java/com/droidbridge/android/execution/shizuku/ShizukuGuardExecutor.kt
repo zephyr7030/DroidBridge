@@ -111,7 +111,7 @@ internal class ShizukuGuardExecutor(
                     require(request.descriptors.size <= 1 && request.descriptors.all { it.role == "stdin" })
                     request.descriptors.singleOrNull()?.descriptor to null
                 }
-                "screen_capture", "screen_capture_raw" -> {
+                "screen_capture" -> {
                     require(
                         request.descriptors.size == 1 &&
                             request.descriptors.single().role == "visual_output"

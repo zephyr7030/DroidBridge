@@ -123,6 +123,9 @@ internal class MagiskCompanionServer(
     private fun serveConnection(connection: DaemonConnection) {
         try {
             connection.readLoop()
+        } catch (_: Throwable) {
+            // The daemon going away, or a frame that cannot be read, ends this connection only;
+            // the release below reports it and the daemon reconnects.
         } finally {
             releaseConnection(connection, notify = true)
             connectionThreads.remove(Thread.currentThread())

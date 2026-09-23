@@ -1,17 +1,18 @@
 package com.droidbridge.android
 
+import com.droidbridge.android.runtimehost.DroidBridgeNotificationListenerService
+import android.content.ComponentName
 import android.app.Application
 import com.droidbridge.android.client.DroidBridgeClient
 import com.droidbridge.android.product.about.LicenseEntry
 import com.droidbridge.android.product.about.ProductInfo
 import com.droidbridge.android.product.tasks.TaskRepository
-import com.droidbridge.android.product.update.ReleaseConfig
+import com.droidbridge.android.product.release.ReleaseConfig
 import com.droidbridge.android.product.update.UpdateManager
 import com.droidbridge.android.ui.diagnostics.DiagnosticsExporter
 import java.io.File
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import com.droidbridge.android.product.automation.AutomationDescriptorCatalog
 import com.droidbridge.android.product.automation.AutomationRepository
 import com.droidbridge.android.product.settings.AppSettings
 
@@ -71,15 +72,12 @@ class AppGraph(application: Application) {
         )
     }
 
+    /** The listener component whose notification-access page the setup guide opens. */
+    val notificationListener: ComponentName =
+        ComponentName(application, DroidBridgeNotificationListenerService::class.java)
+
     /** The exact packaged third-party notices text for the About dialog. */
     val thirdPartyNotices: String by lazy {
         application.assets.open(ProductInfo.NOTICES_ASSET).bufferedReader().use { it.readText() }
-    }
-
-    /** The packaged I1 descriptor artifact, parsed strictly once and consumed only as data. */
-    val automationDescriptors: AutomationDescriptorCatalog by lazy {
-        application.assets.open(AutomationDescriptorCatalog.ASSET).bufferedReader().use { reader ->
-            AutomationDescriptorCatalog.parse(reader.readText())
-        }
     }
 }

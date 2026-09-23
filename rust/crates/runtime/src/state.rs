@@ -187,11 +187,19 @@ pub struct SynchronousExecutionRecord {
     pub executor: ExecutorRecord,
     pub route: ExecutorRequest,
     pub payload: ExecutionPayload,
+    /// The result a replay of this request answers with. A completed execution whose result was
+    /// larger than [`RETAINED_RESULT_LIMIT_BYTES`] answered its own call and keeps none, so a
+    /// replay reports that it cannot be answered again instead of executing a second time.
     pub result: Option<serde_json::Value>,
     pub error: Option<PublicError>,
     pub reserved_bytes: u64,
     pub terminal_bytes: u64,
 }
+
+/// The largest synchronous result kept for replay. Every retained result is rewritten with the
+/// whole store on each later commit, so observations and long outputs, which a client reissues
+/// rather than replays, are answered once and not kept.
+pub const RETAINED_RESULT_LIMIT_BYTES: u64 = 8 * 1024;
 
 pub const RETAINED_MUTATION_RECORD_BYTES: u64 = 1024;
 
@@ -203,6 +211,8 @@ pub struct AutomationRecord {
     pub next_due_at: Option<String>,
     pub deleted_at: Option<String>,
     pub active_execution_id: Option<contract::ExecutionId>,
+    /// A run asked for outside the trigger, admitted by the scheduler's next pass.
+    pub run_requested_at: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

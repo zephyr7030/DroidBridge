@@ -1,5 +1,6 @@
 package com.droidbridge.android.ui.mcp
 
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.droidbridge.android.R
+import com.droidbridge.android.ui.common.RowIcon
 import com.droidbridge.android.product.home.AgentConnectionSummary
 import com.droidbridge.android.product.home.ConnectedAgent
 import com.droidbridge.android.product.home.HomeMcpRow
@@ -68,8 +70,8 @@ fun AgentConnectionRoute(
                     )
                 }
             }
-            item { WayRow(R.string.home_mcp, mcpLabel, "agent:local_mcp", openMcp) }
-            item { WayRow(R.string.mcp_chatgpt_connection, tunnelLabel, "agent:chatgpt", openTunnel) }
+            item { WayRow(R.string.home_mcp, R.drawable.ic_lan, mcpLabel, "agent:local_mcp", openMcp) }
+            item { WayRow(R.string.mcp_chatgpt_connection, R.drawable.ic_cloud, tunnelLabel, "agent:chatgpt", openTunnel) }
         }
     }
     LaunchedEffect(Unit) { viewModel.refresh() }
@@ -77,11 +79,12 @@ fun AgentConnectionRoute(
 
 /** One connection way: its own name, the state its owner reports, and its own page. */
 @Composable
-private fun WayRow(@StringRes title: Int, @StringRes state: Int?, tag: String, open: () -> Unit) {
+private fun WayRow(@StringRes title: Int, @DrawableRes icon: Int, @StringRes state: Int?, tag: String, open: () -> Unit) {
     val label = state
     ListItem(
         headlineContent = { Text(stringResource(title)) },
         supportingContent = if (label != null) ({ Text(stringResource(label)) }) else null,
+        leadingContent = { RowIcon(icon) },
         modifier = Modifier.clickable(onClick = open).testTag(tag),
     )
 }

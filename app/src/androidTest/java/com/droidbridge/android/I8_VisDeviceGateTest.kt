@@ -1,5 +1,6 @@
 package com.droidbridge.android
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
 import android.app.UiAutomation
@@ -13,6 +14,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,11 +23,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.droidbridge.android.runtimehost.IDroidBridgeRuntime
 import com.droidbridge.android.runtimehost.IRuntimeCallback
+import com.droidbridge.android.execution.android.DroidBridgeAccessibilityService
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -43,6 +47,30 @@ class I8_VisDeviceGateTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context: Context
         get() = instrumentation.targetContext
+    private var accessibilityConfigured = false
+    private var previousAccessibilityServices: String? = null
+    private var previousAccessibilityEnabled = 0
+
+    @After
+    fun restoreAccessibilitySettings() {
+        if (!accessibilityConfigured) return
+        withSecureSettingsPermission {
+            check(
+                Settings.Secure.putString(
+                    context.contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    previousAccessibilityServices,
+                ),
+            )
+            check(
+                Settings.Secure.putInt(
+                    context.contentResolver,
+                    Settings.Secure.ACCESSIBILITY_ENABLED,
+                    previousAccessibilityEnabled,
+                ),
+            )
+        }
+    }
 
     @Test
     fun I8_VIS_G01_G06_G08_G10_observeKeepsOneSourceAndPrivilegedXmlIssuesNoRefs() = withRuntime { runtime ->
@@ -65,7 +93,7 @@ class I8_VisDeviceGateTest {
         val imageRef = first.getString("image_ref")
         assertTrue(imageRef.startsWith("dbref:image:"))
         val format = first.getString("image_format")
-        assertTrue(format, format == "heic" || format == "png")
+        assertEquals("jpeg", format)
 
         assertTrue(first.toString(), first.has("nodes"))
         val nodes = first.getJSONArray("nodes")
@@ -101,18 +129,18 @@ class I8_VisDeviceGateTest {
         assertEquals(display.getInt("width"), view.getInt("width"))
         assertEquals(display.getInt("height"), view.getInt("height"))
         val viewFormat = view.getString("format")
-        assertTrue(viewFormat, viewFormat == "heic" || viewFormat == "png")
+        assertEquals("jpeg", viewFormat)
         val clipped = (0 until nodes.length()).map { nodes.getJSONObject(it) }.count { emptyRect(it.getJSONObject("bounds")) }
         Log.i(TAG, "fixture=$fixture observe image=$format nodes=${nodes.length()} clipped=$clipped refs=${refs.size} view=$viewFormat")
         goHome(runtime, fixture)
     }
 
     @Test
-    fun I8_VIS_G07_aCoordinateOutlivesItsSceneAndDiesWithItsDisplay() = withRuntime { runtime ->
+    fun I8_VIS_G07_aCoordinateDiesWithItsSceneOrDisplay() = withRuntime { runtime ->
         val fixture = awaitAdmittedFixture(runtime)
         if (fixture == PROJECTION) return@withRuntime
         openSettings(runtime, fixture)
-        val observation = result(submit(runtime, visual("observe", observeInput(image = false, nodes = true))))
+        val observation = awaitSceneObservation(runtime)
         val display = observation.getJSONObject("display")
         assertTrue(observation.toString(), observation.has("nodes"))
         val scene = observation.getJSONArray("nodes").toString()
@@ -123,17 +151,23 @@ class I8_VisDeviceGateTest {
             .put("x", display.getInt("width") / 2)
             .put("y", display.getInt("height") / 2)
 
-        // DroidBridge's own pages state their own live facts, so a call repaints the page under the
-        // caller. A coordinate names a place on the display, and a scene that changed in between is
-        // not a reason to drop the gesture.
         replaceScene(runtime, fixture)
-        val replaced = result(submit(runtime, visual("observe", observeInput(image = false, nodes = true))))
+        val replaced = awaitSceneObservation(runtime)
         assertNotEquals("the scene must actually change", scene, replaced.getJSONArray("nodes").toString())
-        val delivered = result(submit(runtime, visual("interact", coordinate)))
-        assertTrue(delivered.toString(), delivered.getBoolean("delivered"))
+        val changedScene = submit(runtime, visual("interact", coordinate))
+        assertEquals(changedScene.toString(), "STALE_REFERENCE", errorCode(changedScene))
 
-        // The display the caller observed is the coordinate's whole identity, so a display that is
-        // no longer the observed one refuses it before any input. A size override is a display fact
+        val currentObservation = awaitSceneObservation(runtime)
+        val currentDisplay = currentObservation.getJSONObject("display")
+        val currentCoordinate = JSONObject()
+            .put("operation", "tap")
+            .put("target", "coordinate")
+            .put("observation_id", currentObservation.getString("observation_id"))
+            .put("x", currentDisplay.getInt("width") / 2)
+            .put("y", currentDisplay.getInt("height") / 2)
+
+        // The display the caller observed is part of the coordinate's identity, so a display that
+        // is no longer the observed one refuses it before any input. A size override is a display fact
         // this device applies to the running session; a requested user rotation is not, because a
         // portrait-locked screen never turns.
         val savedSize = wm(runtime, fixture, "size").trim()
@@ -144,7 +178,7 @@ class I8_VisDeviceGateTest {
             val now = result(submit(runtime, visual("observe", observeInput(image = false, nodes = false))))
                 .getJSONObject("display")
             assertNotEquals("the display must actually change", geometry(display), geometry(now))
-            val refused = submit(runtime, visual("interact", coordinate))
+            val refused = submit(runtime, visual("interact", currentCoordinate))
             assertEquals(refused.toString(), "STALE_REFERENCE", errorCode(refused))
         } finally {
             wm(runtime, fixture, if (savedOverride == null) "size reset" else "size $savedOverride")
@@ -400,16 +434,27 @@ class I8_VisDeviceGateTest {
         }
     }
 
+    private fun awaitSceneObservation(runtime: IDroidBridgeRuntime): JSONObject {
+        val deadline = SystemClock.elapsedRealtime() + 15_000
+        var latest = JSONObject()
+        while (true) {
+            latest = result(submit(runtime, visual("observe", observeInput(image = false, nodes = true))))
+            if (
+                latest.has("nodes") &&
+                latest.optJSONObject("interact")?.optBoolean("coordinate") == true
+            ) {
+                return latest
+            }
+            assertTrue("visual scene did not settle: $latest", SystemClock.elapsedRealtime() < deadline)
+            SystemClock.sleep(200)
+        }
+    }
+
     private fun awaitAdmittedFixture(runtime: IDroidBridgeRuntime): String {
         val fixture = InstrumentationRegistry.getArguments().getString("i8VisualFixture") ?: ACCESSIBILITY
         require(fixture in setOf(ACCESSIBILITY, PROJECTION, SHIZUKU, MAGISK)) { "unknown I8 visual fixture: $fixture" }
         if (fixture == ACCESSIBILITY) {
-            // Starting the run force-stops the App, and Android does not rebind a stopped
-            // package's accessibility service until the user's enabled-service setting is
-            // written again, which is exactly what re-enabling it in Settings does.
-            shell("settings delete secure enabled_accessibility_services")
-            shell("settings put secure enabled_accessibility_services $ACCESSIBILITY_SERVICE")
-            shell("settings put secure accessibility_enabled 1")
+            enableAccessibilityFixture()
         }
         val deadline = SystemClock.elapsedRealtime() + 75_000
         while (true) {
@@ -417,6 +462,53 @@ class I8_VisDeviceGateTest {
             if (fixtureAdmitted(status, fixture)) return fixture
             if (SystemClock.elapsedRealtime() >= deadline) error("I8 visual fixture $fixture was not admitted: $status")
             SystemClock.sleep(100)
+        }
+    }
+
+    private fun enableAccessibilityFixture() {
+        check(!accessibilityConfigured)
+        previousAccessibilityServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        )
+        previousAccessibilityEnabled = Settings.Secure.getInt(
+            context.contentResolver,
+            Settings.Secure.ACCESSIBILITY_ENABLED,
+            0,
+        )
+        val own = ComponentName(context, DroidBridgeAccessibilityService::class.java).flattenToString()
+        accessibilityConfigured = true
+        val enabled = previousAccessibilityServices.orEmpty()
+            .split(':')
+            .filter(String::isNotBlank)
+            .toMutableSet()
+            .apply { add(own) }
+            .joinToString(":")
+        withSecureSettingsPermission {
+            check(
+                Settings.Secure.putString(
+                    context.contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    enabled,
+                ),
+            )
+            check(
+                Settings.Secure.putInt(
+                    context.contentResolver,
+                    Settings.Secure.ACCESSIBILITY_ENABLED,
+                    1,
+                ),
+            )
+        }
+    }
+
+    private fun withSecureSettingsPermission(block: () -> Unit) {
+        val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+        automation.adoptShellPermissionIdentity(Manifest.permission.WRITE_SECURE_SETTINGS)
+        try {
+            block()
+        } finally {
+            automation.dropShellPermissionIdentity()
         }
     }
 
@@ -548,8 +640,6 @@ class I8_VisDeviceGateTest {
         const val KEYCODE_HOME = 3
         const val SETTINGS = "com.android.settings"
         const val RUNTIME_SERVICE = "com.droidbridge.android.runtimehost.DroidBridgeService"
-        const val ACCESSIBILITY_SERVICE =
-            "com.droidbridge.android.debug/com.droidbridge.android.execution.android.DroidBridgeAccessibilityService"
         const val ACTION_CONSENT = "com.droidbridge.android.action.MEDIA_PROJECTION_CONSENT"
         const val ACTION_STOP = "com.droidbridge.android.action.MEDIA_PROJECTION_STOP"
         const val EXTRA_RESULT_CODE = "result_code"

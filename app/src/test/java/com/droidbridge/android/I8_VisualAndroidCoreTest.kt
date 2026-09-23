@@ -9,22 +9,48 @@ import com.droidbridge.android.execution.android.AndroidExecutionResult
 import com.droidbridge.android.execution.android.AndroidPrimitive
 import com.droidbridge.android.execution.android.CapabilityRegistration
 import com.droidbridge.android.execution.android.RegisteredCapabilityState
-import com.droidbridge.android.execution.android.VisualCodecFact
-import com.droidbridge.android.execution.android.VisualCodecHealth
 import com.droidbridge.android.execution.android.VisualDisplaySnapshot
+import com.droidbridge.android.execution.android.VisualSceneActivity
 import com.droidbridge.android.execution.android.ProjectionSessionSlot
-import com.droidbridge.android.execution.android.decodeVisualRawRow
 import com.droidbridge.android.execution.shizuku.ShizukuGuardedPlanCodec
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 class I8_VisualAndroidCoreTest {
+    @Test
+    fun anObservationWaitsForTheSceneToHoldStillButNeverWithoutBound() {
+        var now = 10_000L
+        val slept = mutableListOf<Long>()
+        val activity = VisualSceneActivity(clock = { now }, sleep = { millis -> slept += millis; now += millis })
+
+        // Nothing ever reported a change: no accessibility service, no wait.
+        runBlocking { activity.awaitQuiet() }
+        assertEquals(emptyList<Long>(), slept)
+
+        // A change 100 ms ago waits out the rest of the quiet period, once.
+        activity.changed()
+        now += 100
+        runBlocking { activity.awaitQuiet() }
+        assertEquals(listOf(VisualSceneActivity.QUIET_MS - 100), slept)
+
+        // A screen that keeps changing is observed as it is once the bound is spent.
+        lateinit var keepsChanging: VisualSceneActivity
+        keepsChanging = VisualSceneActivity(
+            clock = { now },
+            sleep = { millis -> now += millis; keepsChanging.changed() },
+        )
+        keepsChanging.changed()
+        val started = now
+        runBlocking { keepsChanging.awaitQuiet() }
+        assertEquals(VisualSceneActivity.MAX_SETTLE_MS, now - started)
+    }
+
     @Test
     fun I8_VIS_G07_sceneLookupKeepsTheExactRetainedHandleAndNeverRetargetsAReusedRef() {
         var now = 1_000L
@@ -91,40 +117,16 @@ class I8_VisualAndroidCoreTest {
     }
 
     @Test
-    fun I8_VIS_G03_rawRowsPreserveTheFiveContractPixelFormats() {
-        assertArrayEquals(
-            intArrayOf(unchecked(0x7f112233), unchecked(0x00a0b0c0)),
-            decodeVisualRawRow(1, byteArrayOf(0x11, 0x22, 0x33, 0x7f, 0xa0.toByte(), 0xb0.toByte(), 0xc0.toByte(), 0)),
-        )
-        assertArrayEquals(
-            intArrayOf(unchecked(0xff112233)),
-            decodeVisualRawRow(2, byteArrayOf(0x11, 0x22, 0x33, 0)),
-        )
-        assertArrayEquals(
-            intArrayOf(unchecked(0xff112233)),
-            decodeVisualRawRow(3, byteArrayOf(0x11, 0x22, 0x33)),
-        )
-        assertArrayEquals(
-            intArrayOf(unchecked(0xffff0000), unchecked(0xff00ff00), unchecked(0xff0000ff)),
-            decodeVisualRawRow(4, byteArrayOf(0x00, 0xf8.toByte(), 0xe0.toByte(), 0x07, 0x1f, 0x00)),
-        )
-        assertArrayEquals(
-            intArrayOf(unchecked(0x7f112233)),
-            decodeVisualRawRow(5, byteArrayOf(0x33, 0x22, 0x11, 0x7f)),
-        )
-    }
-
-    @Test
     fun I8_VIS_G03_shizukuVisualPlansKeepTheExactProgramsDeadlinesAndOutputBounds() {
-        val raw = ShizukuGuardedPlanCodec.decode(
-            "screen_capture_raw",
+        val capture = ShizukuGuardedPlanCodec.decode(
+            "screen_capture",
             "{}".encodeToByteArray(),
             "/data/user/0/com.droidbridge.android/files/guard",
         )
-        assertEquals("/system/bin/screencap", raw.program)
-        assertEquals(emptyList<String>(), raw.arguments)
-        assertEquals(5_000L, raw.deadlineMs)
-        assertEquals(64 * 1_024 * 1_024 + 16, raw.stdoutLimit)
+        assertEquals("/system/bin/screencap", capture.program)
+        assertEquals(listOf("-p"), capture.arguments)
+        assertEquals(5_000L, capture.deadlineMs)
+        assertEquals(8 * 1_024 * 1_024, capture.stdoutLimit)
 
         val longPress = ShizukuGuardedPlanCodec.decode(
             "input_long_press",
@@ -152,24 +154,6 @@ class I8_VisualAndroidCoreTest {
                 )
             }
         }
-    }
-
-    @Test
-    fun I8_VIS_G05_failedHeicGenerationCannotAuthorizeAnotherEncode() {
-        var probes = 0
-        val health = VisualCodecHealth { _, _ ->
-            probes += 1
-            VisualCodecFact(true, codecName = "test-codec")
-        }
-        val first = health.snapshot(1080, 2400)
-        assertTrue(health.accepts(first.generation, 1080, 2400))
-
-        health.invalidate(first.generation)
-
-        assertFalse(health.accepts(first.generation, 1080, 2400))
-        val replacement = health.snapshot(1080, 2400)
-        assertTrue(replacement.generation > first.generation)
-        assertEquals(2, probes)
     }
 
     @Test
@@ -217,6 +201,11 @@ class I8_VisualAndroidCoreTest {
 
         assertSame(framework, registry.executor(AndroidPrimitive.AccessibilityObserve, 7))
         assertSame(accessibility, registry.executor(AndroidPrimitive.AccessibilityObserve, 11))
+        // A companion call carries the execution's fence, not a capability generation, so the
+        // observation has to reach the component registered under the key that owns it.
+        assertSame(accessibility, registry.executor("visual.accessibility"))
+        assertSame(framework, registry.executor("android.framework"))
+        assertNull(registry.executor("visual.media_projection_session"))
     }
 
     @Test
@@ -302,5 +291,4 @@ class I8_VisualAndroidCoreTest {
         hierarchySha256 = hash,
     )
 
-    private fun unchecked(value: Long): Int = value.toInt()
 }

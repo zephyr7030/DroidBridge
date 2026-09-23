@@ -147,9 +147,9 @@ fn i2_g01_domain_reducers_and_resolver_preserve_authority() {
         ExecutorRequest::Visual(VisualRoute::Hierarchy),
     )
     .unwrap();
-    assert_eq!(admitted.provider(), Provider::Shizuku);
+    assert_eq!(admitted.provider(), Provider::Accessibility);
     facts.shizuku = Unavailable;
-    assert_eq!(admitted.provider(), Provider::Shizuku);
+    assert_eq!(admitted.provider(), Provider::Accessibility);
     assert_eq!(facts.shizuku, Unavailable);
     assert_eq!(admitted.fence().host_generation, 3);
     assert_eq!(admitted.capability_generation(), 1);
@@ -358,6 +358,7 @@ fn automation_calls_reuse_public_input_bounds() {
                 as_task: false,
             }),
         },
+        on_failure: Default::default(),
     });
     assert_eq!(
         validate_automation(&invalid).unwrap_err().code,

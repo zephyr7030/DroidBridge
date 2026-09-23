@@ -1426,6 +1426,71 @@ fn i8_fs_g02_all_actions_share_one_non_mutating_executor_resolver() {
         .is_none()
     );
     assert!(no_preflight.calls.into_inner().is_empty());
+
+    let shared = FilesystemCall::Inspect(FilesystemInspectInput {
+        target: FileTarget {
+            target_type: FileTargetType::Path,
+            value: "/sdcard/Download/droidbridge".to_owned(),
+        },
+        recursive: false,
+        max_depth: 1,
+        max_entries: 200,
+    });
+    let shared_preflight = RecordingPreflight {
+        app: Preflight::Negative,
+        shizuku: Preflight::Negative,
+        calls: RefCell::new(Vec::new()),
+    };
+    let shared_executor = resolve_filesystem_executor(
+        &capability(RuntimeHost::ApkRuntime),
+        &shared_preflight,
+        &shared,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(shared_executor.provider(), Provider::Shizuku);
+    assert!(shared_preflight.calls.into_inner().is_empty());
+
+    let mut scoped_capability = capability(RuntimeHost::ApkRuntime);
+    scoped_capability.resolver_facts.shizuku = CapabilityState::Unavailable;
+    let scoped_preflight = RecordingPreflight {
+        app: Preflight::Negative,
+        shizuku: Preflight::Negative,
+        calls: RefCell::new(Vec::new()),
+    };
+    let scoped_executor =
+        resolve_filesystem_executor(&scoped_capability, &scoped_preflight, &shared)
+            .unwrap()
+            .unwrap();
+    assert_eq!(scoped_executor.provider(), Provider::AppNative);
+    assert!(scoped_preflight.calls.into_inner().is_empty());
+
+    let crossing = FilesystemCall::Manage(FilesystemManageInput::Copy {
+        source: FileTarget {
+            target_type: FileTargetType::Path,
+            value: "/sdcard/Download/source".to_owned(),
+        },
+        destination: FileTarget {
+            target_type: FileTargetType::Path,
+            value: "/data/user/0/com.droidbridge.android/files/destination".to_owned(),
+        },
+        recursive: true,
+        overwrite: false,
+    });
+    assert_eq!(
+        resolve_filesystem_executor(
+            &capability(RuntimeHost::ApkRuntime),
+            &RecordingPreflight {
+                app: Preflight::Positive,
+                shizuku: Preflight::Positive,
+                calls: RefCell::new(Vec::new()),
+            },
+            &crossing,
+        )
+        .unwrap_err()
+        .code,
+        contract::ErrorCode::Unsupported,
+    );
 }
 
 #[test]

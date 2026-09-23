@@ -604,13 +604,70 @@ async fn i10_g07_tool_and_resource_references_map_deterministically() {
             )
             .await,
     );
-    assert_eq!(failed["result"]["structuredContent"], error);
+    // The failure also says what to do next, so a client acts instead of guessing from the code.
+    let mut expected = error.clone();
+    expected["message"] = json!(
+        "That capability is not available right now. Call context status to see which \
+         capabilities are available and why."
+    );
+    assert_eq!(failed["result"]["structuredContent"], expected);
     assert_eq!(failed["result"]["isError"], true);
     assert!(
         failed["result"]["_meta"]
             .get("io.droidbridge/refExpiries")
             .is_none()
     );
+
+    // Typing names its own next step: the target is not an editor, or no editor has focus.
+    for (input, code, starts) in [
+        (
+            json!({"operation": "text", "text": "hi", "node_ref": "n/1"}),
+            "UNSUPPORTED",
+            "That node does not accept text.",
+        ),
+        (
+            json!({"operation": "text", "text": "hi"}),
+            "CAPABILITY_UNAVAILABLE",
+            "No editor has input focus.",
+        ),
+    ] {
+        let error = json!({"code": code, "operation": "visual.interact", "retryable": false});
+        host.reply_submit(json!({"protocol_version": 1, "request_id": REQUEST_ID, "outcome": "error", "error": error}));
+        let failed = json_body(
+            &facade
+                .handle(
+                    tool_call("visual", json!({"action": "interact", "input": input})),
+                    TOKEN,
+                )
+                .await,
+        );
+        let message = failed["result"]["structuredContent"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(message.starts_with(starts), "{message}");
+    }
+
+    // A reason the Runtime wrote itself is kept, and a code with no next step is left alone.
+    for error in [
+        json!({"code": "RESOURCE_LIMIT", "operation": "command.run", "retryable": false,
+               "message": "the Runtime's own reason"}),
+        json!({"code": "IO_ERROR", "operation": "command.run", "retryable": false}),
+    ] {
+        host.reply_submit(json!({"protocol_version": 1, "request_id": REQUEST_ID, "outcome": "error", "error": error}));
+        let failed = json_body(
+            &facade
+                .handle(
+                    tool_call(
+                        "command",
+                        json!({"action": "run", "input": {"command": "id", "run_as": "root"}}),
+                    ),
+                    TOKEN,
+                )
+                .await,
+        );
+        assert_eq!(failed["result"]["structuredContent"], error);
+    }
 
     // Arguments outside the tool's generated union are -32602, and the rejection names the field
     // that has to change.
@@ -734,6 +791,56 @@ async fn i10_g07_tool_and_resource_references_map_deterministically() {
     assert_eq!(
         json_body(&facade.handle(read(text_uri), TOKEN).await)["error"]["code"],
         -32603
+    );
+}
+
+#[tokio::test]
+async fn i10_g07_visual_image_is_returned_inline_with_its_structured_reference() {
+    let (facade, host) = facade();
+    let image_uri = "dbref:image:99300000-0000-4000-8000-000000000099";
+    host.reply_submit(json!({
+        "protocol_version": 1,
+        "request_id": REQUEST_ID,
+        "outcome": "success",
+        "result": {
+            "observation_id": "99300000-0000-4000-8000-000000000098",
+            "image_ref": image_uri,
+            "image_format": "jpeg"
+        }
+    }));
+    host.queue_query(
+        json!({"artifacts": [{
+            "ref": image_uri,
+            "expires_at": "2026-09-16T08:00:00.000Z"
+        }]}),
+        None,
+    );
+    host.queue_query(
+        json!({"uri": image_uri, "kind": "image", "mime": "image/jpeg", "size": 4}),
+        Some(&[0xff, 0xd8, 0xff, 0xd9]),
+    );
+
+    let called = json_body(
+        &facade
+            .handle(
+                tool_call(
+                    "visual",
+                    json!({
+                        "action": "observe",
+                        "input": {"include_image": true, "include_nodes": false}
+                    }),
+                ),
+                TOKEN,
+            )
+            .await,
+    );
+
+    assert_eq!(called["result"]["content"][1]["type"], "image");
+    assert_eq!(called["result"]["content"][1]["mimeType"], "image/jpeg");
+    assert_eq!(called["result"]["content"][1]["data"], "/9j/2Q==");
+    assert_eq!(
+        called["result"]["structuredContent"]["image_ref"],
+        image_uri
     );
 }
 

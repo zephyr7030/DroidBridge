@@ -10,9 +10,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** The S-UI-007 Tasks filter; `All` sends no state filter. */
-enum class TaskFilter(val states: List<String>?) {
-    All(null),
+/** The Task state groups Home lists: running work first, then what has ended. */
+enum class TaskFilter(val states: List<String>) {
     Active(listOf("created", "queued", "running")),
     Completed(listOf("completed", "failed", "cancelled", "interrupted")),
 }
@@ -44,7 +43,7 @@ data class TaskSnapshot(
 )
 
 object TaskPresentation {
-    private val activeStates = TaskFilter.Active.states.orEmpty().toSet()
+    private val activeStates = TaskFilter.Active.states.toSet()
     private val outputRefFields =
         listOf("stdout_ref", "stderr_ref", "data_ref", "image_ref", "capture_ref", "packet_ref")
 

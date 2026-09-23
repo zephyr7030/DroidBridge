@@ -48,6 +48,12 @@ internal class AccessibilitySceneStore<H>(
     }
 
     @Synchronized
+    fun matches(observationId: String, proof: AccessibilitySceneProof): Boolean {
+        evictExpired()
+        return entries[observationId]?.proof == proof
+    }
+
+    @Synchronized
     fun clear() {
         entries.values.forEach { it.release() }
         entries.clear()
@@ -101,45 +107,3 @@ internal class ProjectionSessionSlot<S> {
         return removed
     }
 }
-
-internal fun decodeVisualRawRow(pixelFormat: Int, bytes: ByteArray): IntArray {
-    val bytesPerPixel = when (pixelFormat) {
-        1, 2, 5 -> 4
-        3 -> 3
-        4 -> 2
-        else -> throw AndroidExecutionException("IO_ERROR")
-    }
-    if (bytes.isEmpty() || bytes.size % bytesPerPixel != 0) {
-        throw AndroidExecutionException("IO_ERROR")
-    }
-    return IntArray(bytes.size / bytesPerPixel) { index ->
-        val offset = index * bytesPerPixel
-        when (pixelFormat) {
-            1 -> argb(bytes[offset + 3], bytes[offset], bytes[offset + 1], bytes[offset + 2])
-            2 -> argb(0xff.toByte(), bytes[offset], bytes[offset + 1], bytes[offset + 2])
-            3 -> argb(0xff.toByte(), bytes[offset], bytes[offset + 1], bytes[offset + 2])
-            4 -> {
-                val packed = unsigned(bytes[offset]) or (unsigned(bytes[offset + 1]) shl 8)
-                val red5 = (packed ushr 11) and 0x1f
-                val green6 = (packed ushr 5) and 0x3f
-                val blue5 = packed and 0x1f
-                argb(
-                    0xff.toByte(),
-                    ((red5 shl 3) or (red5 ushr 2)).toByte(),
-                    ((green6 shl 2) or (green6 ushr 4)).toByte(),
-                    ((blue5 shl 3) or (blue5 ushr 2)).toByte(),
-                )
-            }
-            5 -> argb(bytes[offset + 3], bytes[offset + 2], bytes[offset + 1], bytes[offset])
-            else -> error("validated pixel format")
-        }
-    }
-}
-
-private fun argb(alpha: Byte, red: Byte, green: Byte, blue: Byte): Int =
-    (unsigned(alpha) shl 24) or
-        (unsigned(red) shl 16) or
-        (unsigned(green) shl 8) or
-        unsigned(blue)
-
-private fun unsigned(value: Byte): Int = value.toInt() and 0xff

@@ -423,14 +423,13 @@ pub struct VisualNode {
     pub editable: Option<bool>,
 }
 
-/// What the caller may address in this observation before it expires. A coordinate target is bound to
-/// the display identity and the observation's lifetime; a node target additionally needs a node ref, and
-/// carries a scene fingerprint that the device can still report as changed. As everywhere else in this
-/// result, an absent reason means the capability is available.
+/// What the caller may address in this observation before it expires. Coordinate and node targets are
+/// both bound to the observed scene. As everywhere else in this result, an absent reason means the
+/// capability is available.
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisualInteractFact {
-    pub coordinate: True,
+    pub coordinate: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_unavailable_reason: Option<String>,
     pub ttl_ms: u64,

@@ -1,6 +1,6 @@
 package com.droidbridge.android
 
-import com.droidbridge.android.product.update.ReleaseConfig
+import com.droidbridge.android.product.release.ReleaseConfig
 import com.droidbridge.android.runtimehost.ApkSessionInstaller
 import com.droidbridge.android.runtimehost.ArchiveFacts
 import com.droidbridge.android.runtimehost.InstalledPackageFacts

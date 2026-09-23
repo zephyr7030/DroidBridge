@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,6 +29,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.droidbridge.android.R
+import com.droidbridge.android.ui.common.RowIcon
 import com.droidbridge.android.client.DroidBridgeClient
 import com.droidbridge.android.product.diagnostics.DiagnosticsExport
 import com.droidbridge.android.product.diagnostics.FaultFileRead
@@ -143,22 +145,22 @@ fun DiagnosticsRoute(viewModel: DiagnosticsViewModel, apkVersion: String, back: 
         val runtimeHost = status.child("components")?.child("runtime_host")
         val magisk = status.child("components")?.child("magisk")
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-            item { Fact(R.string.diag_apk_version, apkVersion, "apk_version") }
-            item { Fact(R.string.diag_runtime_host, runtimeHost.text("host") ?: session.text("host"), "runtime_host") }
-            item { Fact(R.string.diag_component_version, runtimeHost.text("component_version"), "component_version") }
-            magisk.text("daemon_version")?.let { item { Fact(R.string.diag_daemon_version, it, "daemon_version") } }
-            magisk.text("module_version")?.let { item { Fact(R.string.diag_module_version, it, "module_version") } }
-            item { Fact(R.string.mcp_protocol_version, runtimeHost.text("protocol_version"), "protocol") }
-            item { Fact(R.string.diag_store_schema, runtimeHost.text("store_schema_version"), "store_schema") }
+            item { Fact(R.string.diag_apk_version, apkVersion, "apk_version", R.drawable.ic_android) }
+            item { Fact(R.string.diag_runtime_host, runtimeHost.text("host") ?: session.text("host"), "runtime_host", R.drawable.ic_memory) }
+            item { Fact(R.string.diag_component_version, runtimeHost.text("component_version"), "component_version", R.drawable.ic_extension) }
+            magisk.text("daemon_version")?.let { item { Fact(R.string.diag_daemon_version, it, "daemon_version", R.drawable.ic_terminal) } }
+            magisk.text("module_version")?.let { item { Fact(R.string.diag_module_version, it, "module_version", R.drawable.ic_extension) } }
+            item { Fact(R.string.mcp_protocol_version, runtimeHost.text("protocol_version"), "protocol", R.drawable.ic_tag) }
+            item { Fact(R.string.diag_store_schema, runtimeHost.text("store_schema_version"), "store_schema", R.drawable.ic_storage) }
             item {
                 val runtime = status.child("runtime")
                 val readiness = runtime.text("readiness")?.let { value -> runtime.text("reason")?.let { "$value $it" } ?: value }
-                Fact(R.string.diag_runtime_readiness, readiness ?: session.text("start_failure"), "runtime_readiness")
+                Fact(R.string.diag_runtime_readiness, readiness ?: session.text("start_failure"), "runtime_readiness", R.drawable.ic_monitor_heart)
             }
             item {
                 val compatibility = status.child("compatibility")
                 val value = compatibility?.entries?.joinToString { (key, fact) -> "$key=${(fact as? JsonPrimitive)?.contentOrNull}" }
-                Fact(R.string.diag_ipc_compatibility, value, "ipc_compatibility")
+                Fact(R.string.diag_ipc_compatibility, value, "ipc_compatibility", R.drawable.ic_link)
             }
             item {
                 val facts = listOfNotNull(status.child("grants"), status.child("capabilities"))
@@ -167,10 +169,14 @@ fun DiagnosticsRoute(viewModel: DiagnosticsViewModel, apkVersion: String, back: 
                         val entry = fact as? JsonObject
                         listOfNotNull(key, entry.text("state"), entry.text("reason")).joinToString(" ")
                     }
-                Fact(R.string.diag_capability_facts, facts.ifEmpty { null }, "capability_facts")
+                Fact(R.string.diag_capability_facts, facts.ifEmpty { null }, "capability_facts", R.drawable.ic_verified_user)
             }
             item {
-                ListItem(headlineContent = { Text(stringResource(R.string.diag_recent_failures)) }, modifier = Modifier.testTag("diagnostics:recent_failures"))
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.diag_recent_failures)) },
+                    leadingContent = { RowIcon(R.drawable.ic_bug_report) },
+                    modifier = Modifier.testTag("diagnostics:recent_failures"),
+                )
             }
             val failures = state.faults.orEmpty().values
                 .flatMap { read -> read.records.orEmpty().mapNotNull { it as? JsonObject } }
@@ -187,6 +193,7 @@ fun DiagnosticsRoute(viewModel: DiagnosticsViewModel, apkVersion: String, back: 
             items(failures) { record ->
                 ListItem(
                     headlineContent = { Text(listOfNotNull(record.text("component"), record.text("code")).joinToString(" ")) },
+                    leadingContent = { RowIcon(R.drawable.ic_status_error) },
                     supportingContent = {
                         Text(listOfNotNull(record.text("phase"), record.text("at"), record.text("repeat_count")?.let { "x$it" }).joinToString(" "))
                     },
@@ -209,9 +216,10 @@ fun DiagnosticsRoute(viewModel: DiagnosticsViewModel, apkVersion: String, back: 
 
 /** A technical fact row; an absent live value shows `state_unavailable` rather than a guess. */
 @Composable
-private fun Fact(@StringRes title: Int, value: String?, tag: String) {
+private fun Fact(@StringRes title: Int, value: String?, tag: String, @DrawableRes icon: Int) {
     ListItem(
         headlineContent = { Text(stringResource(title)) },
+        leadingContent = { RowIcon(icon) },
         supportingContent = { Text(value ?: stringResource(R.string.state_unavailable)) },
         modifier = Modifier.testTag("diagnostics:$tag"),
     )

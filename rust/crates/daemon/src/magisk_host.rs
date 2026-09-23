@@ -176,6 +176,7 @@ impl MagiskHost {
         sdk_int: u32,
         owner: RuntimeOwner,
         companion: CompanionPort,
+        task_activity: Arc<crate::app_keepalive::TaskActivityBeacon>,
     ) -> Result<Self, DomainError> {
         let instance_id = new_uuid()?;
         let boot_id = read_boot_id()?;
@@ -291,6 +292,7 @@ impl MagiskHost {
             store: Arc::clone(&store),
             lease: Arc::clone(&lease),
             capabilities: capabilities.clone(),
+            task_activity,
             recovery_proof: if recovery.guards_are_clean() {
                 RecoveryProof::Clean
             } else {
@@ -1159,6 +1161,7 @@ struct MagiskHostControl {
     lease: Arc<LifetimeLease>,
     capabilities: runtime::ApkCapabilityPort,
     recovery_proof: RecoveryProof,
+    task_activity: Arc<crate::app_keepalive::TaskActivityBeacon>,
 }
 
 impl HostControlPort for MagiskHostControl {
@@ -1196,6 +1199,17 @@ impl HostControlPort for MagiskHostControl {
             self.capabilities.withdraw_readiness()?;
         }
         Ok(self.recovery_proof)
+    }
+
+    /// The App executes the Android primitives these Tasks need, so the count is carried to it
+    /// and held there. Publishing never fails a committed mutation: the beacon only records the
+    /// count, and the wake it leads to is reported on this daemon's own log.
+    fn task_activity_changed(&self, active_tasks: usize, canonical_revision: u64) {
+        self.task_activity.publish(
+            self.lease.live().runtime_epoch.as_str(),
+            active_tasks as u64,
+            canonical_revision,
+        );
     }
 }
 

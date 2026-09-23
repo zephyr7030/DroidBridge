@@ -343,6 +343,91 @@ async fn i4_g10_synchronous_mutation_round_trips_and_replays_from_the_canonical_
 }
 
 #[tokio::test]
+async fn i4_g10_a_result_over_the_retention_bound_is_not_rewritten_with_every_later_commit() {
+    use contract::{ErrorCode, RunAs};
+    use runtime::{
+        ExecutionCompletion, ExecutionOutcome, ExecutionPayload, RecoveryProof, RuntimeCore,
+        SynchronousAdmission, SynchronousExecutionState,
+        fakes::{FakeArtifacts, FakeCapabilities, FakeExecutions, FakeHostControl},
+    };
+
+    let (_directory, store, lease) = initialized_store("synchronous-unretained");
+    let lease = Arc::new(lease);
+    let port = JsonPersistencePort::new(store.clone(), lease.clone());
+    let capabilities = FakeCapabilities::new(ready_capability());
+    let executions = FakeExecutions::default();
+    let large = serde_json::json!({"nodes": "n".repeat(12 * 1024)});
+    executions.push(Ok(ExecutionCompletion {
+        fence: ready_capability().fence,
+        capability_generation: 2,
+        outcome: ExecutionOutcome::SynchronousCompleted {
+            result: large.clone(),
+            encoded_bytes: 1,
+        },
+        cleanup_verified: true,
+    }));
+    let core = RuntimeCore::new(
+        port.clone(),
+        FakeArtifacts::default(),
+        executions,
+        capabilities.clone(),
+        FakeHostControl::new(RecoveryProof::Clean).with_capabilities(capabilities.clone()),
+    );
+    let admission = SynchronousAdmission {
+        request_id: id(860),
+        payload_sha256: "86".repeat(32),
+        execution_id: id(861),
+        operation: "visual.observe".to_owned(),
+        route: domain::ExecutorRequest::Command(RunAs::App),
+        payload: ExecutionPayload::OpaqueOperation("visual.observe".to_owned()),
+        settlement_bound_bytes: 32 * 1024,
+        now_ms: 1_788_825_600_000,
+    };
+
+    assert_eq!(
+        core.run_synchronous(
+            admission.clone(),
+            "2026-09-08T00:00:01.000Z".to_owned(),
+            1_788_825_601_000
+        )
+        .await
+        .unwrap(),
+        large
+    );
+    // The canonical store the real decoder reads back keeps the record, not the result.
+    let (canonical, encoded) = store.load_measured(&lease).unwrap();
+    assert!(encoded < 8 * 1024, "store is {encoded} bytes");
+    let execution = canonical
+        .request_records
+        .iter()
+        .find(|record| record.request_id == admission.request_id)
+        .and_then(|record| record.synchronous_execution.as_ref())
+        .unwrap();
+    assert_eq!(execution.state, SynchronousExecutionState::Completed);
+    assert!(execution.result.is_none() && execution.error.is_none());
+
+    let restarted = RuntimeCore::new(
+        port,
+        FakeArtifacts::default(),
+        FakeExecutions::default(),
+        capabilities.clone(),
+        FakeHostControl::new(RecoveryProof::Clean).with_capabilities(capabilities),
+    );
+    assert_eq!(
+        restarted
+            .run_synchronous(
+                admission,
+                "2026-09-08T00:00:02.000Z".to_owned(),
+                1_788_825_602_000
+            )
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::ResourceLimit
+    );
+}
+
+#[tokio::test]
 async fn i8_task_g02_cancel_round_trips_through_the_canonical_store() {
     use contract::{ExecutionClass, MotherTool, RunAs, TaskControlCall, TaskGetInput, TaskState};
     use runtime::{

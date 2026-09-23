@@ -59,16 +59,14 @@ clients such as ChatGPT ask you to confirm actions that change things.
 
 DroidBridge works on an ordinary phone and unlocks more when you give it more:
 
-| | No root | + Shizuku | + Magisk module |
+| | No root | + Shizuku | + root module (Magisk / KernelSU / APatch) |
 |---|---|---|---|
-| Screen observe / tap / type | Accessibility service | ✓ (typing: ASCII¹) | ✓ |
+| Screen observe / tap / type | Accessibility service | Observe/tap; typing uses Accessibility | ✓ |
 | Screen capture | Screen-capture consent | ✓ | ✓ |
 | Notifications | Notification access | Notification access | ✓ |
 | Shell commands | App identity | Shell identity | Root identity |
 | Network capture / injection | — | — | ✓ |
 | Stays alive in the background | Battery and autostart settings | Kept alive until the next reboot | Kept alive, restored after reboot |
-
-¹ Over Shizuku, text beyond ASCII (Chinese, emoji) needs the accessibility service or the Magisk module.
 
 The in-app **Execution & access** page walks you through each switch with a button that opens the
 right system page, and tells you when something is already covered by a stronger backend.
@@ -78,8 +76,9 @@ right system page, and tells you when something is already covered by a stronger
 - Android 13 to 17 on an **arm64-v8a** device.
 - For ChatGPT: a plan with web developer mode (Plus or higher), a Secure MCP Tunnel and a Runtime
   API key from the OpenAI platform.
-- Optional: [Shizuku](https://shizuku.rikka.app/) or [Magisk](https://github.com/topjohnwu/Magisk)
-  for the higher privilege levels.
+- Optional: [Shizuku](https://shizuku.rikka.app/), [Magisk](https://github.com/topjohnwu/Magisk),
+  [KernelSU](https://github.com/tiann/KernelSU) or [APatch](https://github.com/bmax121/APatch) for
+  the higher privilege levels.
 
 ## Install
 

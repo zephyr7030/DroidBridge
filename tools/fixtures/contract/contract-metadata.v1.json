@@ -157,6 +157,12 @@
       "tool": "automation"
     },
     {
+      "action": "run",
+      "automation_compatible": false,
+      "capability_requirement": "none",
+      "tool": "automation"
+    },
+    {
       "action": "list",
       "automation_compatible": false,
       "capability_requirement": "none",
@@ -272,6 +278,9 @@
     ],
     "automation.list": [
       "result.automation.list"
+    ],
+    "automation.run": [
+      "result.automation.run"
     ],
     "automation.save": [
       "result.automation.save"

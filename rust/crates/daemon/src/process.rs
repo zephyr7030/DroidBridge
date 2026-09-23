@@ -53,6 +53,7 @@ struct Daemon {
     companion_port: CompanionPort,
     companion_capabilities: Vec<CompanionCapabilityRegistration>,
     maintenance: crate::maintenance::MaintenanceAttempts,
+    task_activity: Arc<crate::app_keepalive::TaskActivityBeacon>,
 }
 
 impl Daemon {
@@ -97,6 +98,7 @@ impl Daemon {
             })?;
         let observation = observe_module(&module_root, &canonical_base, &identity)?;
         let store = Arc::new(StateStore::new(canonical_base.clone()));
+        let task_activity = crate::app_keepalive::TaskActivityBeacon::new(identity.package);
         let mut daemon = Self {
             identity,
             module_root,
@@ -111,6 +113,7 @@ impl Daemon {
             companion_port: CompanionPort::default(),
             companion_capabilities: Vec::new(),
             maintenance: crate::maintenance::MaintenanceAttempts::default(),
+            task_activity,
         };
         let owner = daemon.store.read_owner()?;
         if DaemonRole::from_owner(owner.host).may_create_core() {
@@ -129,7 +132,18 @@ impl Daemon {
             let started = Instant::now();
             if let Ok(mut stream) = connect_abstract(self.identity.socket_name) {
                 keepalive.observe_present();
-                let _ = self.serve_connection(&mut stream);
+                // The App that answers here serves the Android primitives this daemon's Tasks
+                // execute, so it is told what it must hold for as long as this connection lives.
+                self.task_activity.set_connected(true);
+                if let Err(error) = self.serve_connection(&mut stream) {
+                    // The only record of a companion connection that ended, and the only way a
+                    // rejected handshake is visible at all; the supervisor keeps this stderr.
+                    eprintln!(
+                        "droidbridged: companion connection ended: {:?} {}",
+                        error.code, error.reason
+                    );
+                }
+                self.task_activity.set_connected(false);
                 self.companion_port.withdraw()?;
                 self.set_companion(false)?;
                 // The backoff is not shortened for keep-alive: reconnecting within a second of a
@@ -140,8 +154,9 @@ impl Daemon {
                     failure_index = 0;
                 }
             } else {
-                // No Runtime listens: an enabled agent connection needs the App started again.
-                keepalive.observe_absent(&self.canonical_base);
+                // No Runtime listens: an enabled agent connection, or a Task this daemon still
+                // owns, needs the App started again.
+                keepalive.observe_absent(&self.canonical_base, self.task_activity.wake_wanted());
             }
             if !self.canonical_directory_is_current() {
                 return Ok(());
@@ -167,8 +182,16 @@ impl Daemon {
         };
         send_json(stream, &daemon_handshake)?;
         let app_handshake: Handshake = receive_json(stream)?;
-        let expected_uid = fs::metadata(&self.canonical_base)
-            .map_err(|_| io_error("cannot inspect App canonical directory"))?
+        // The App's uid is read from the package data directory the system created for it, not
+        // from the canonical base inside it: a base recreated by root after App data was cleared
+        // carries root as its owner, and would lock the App out for good.
+        let package_directory = self
+            .canonical_base
+            .ancestors()
+            .nth(2)
+            .ok_or_else(|| io_error("App canonical directory has no package directory"))?;
+        let expected_uid = fs::metadata(package_directory)
+            .map_err(|_| io_error("cannot inspect App package directory"))?
             .uid();
         app_handshake.validate_peer(
             peer_uid(stream).map_err(|_| io_error("cannot authenticate App socket"))?,
@@ -392,9 +415,9 @@ impl Daemon {
             Operation::NetworkDefaultChanged => self.network_default_changed(request),
             Operation::NetworkAttachment => self.network_attachment(request),
             Operation::DiagnosticsSnapshot => Ok(json!({"faults":[]})),
-            Operation::MaintenanceStatus => {
-                Ok(self.maintenance.status(&self.canonical_base, &request.payload))
-            }
+            Operation::MaintenanceStatus => Ok(self
+                .maintenance
+                .status(&self.canonical_base, &request.payload)),
             Operation::MaintenanceInstallApk | Operation::MaintenanceInstallModule => {
                 Err(DomainError::new(
                     ErrorCode::InternalError,
@@ -606,6 +629,7 @@ impl Daemon {
             self.sdk_int,
             owner.clone(),
             self.companion_port.clone(),
+            Arc::clone(&self.task_activity),
         )?;
         host.set_app_execution_surface(self.companion.capability_state())?;
         self.host = Some(host);

@@ -443,213 +443,6 @@ async fn i9_g04_saved_calls_validate_against_the_generated_contract() {
     assert_eq!(persistence.snapshot().automations.len(), 1);
 }
 
-/// One editable scalar leaf of a saved definition at its S-UI-008 template path, together with the
-/// template-path facts its `visible_when` conditions are evaluated against.
-struct EditorLeaf {
-    path: String,
-    context: BTreeMap<String, Value>,
-}
-
-/// Walks a saved Automation exactly as the editor template does: root and trigger fields, then
-/// each action node relative to `/action/<variant>`, recursing through the structural
-/// children/then/else/repeat slots instead of treating them as descriptor fields.
-fn editor_leaves(automation: &Value) -> Vec<(Vec<EditorLeaf>, BTreeMap<String, Value>)> {
-    let mut root = BTreeMap::new();
-    root.insert("/name".to_owned(), automation["name"].clone());
-    root.insert("/enabled".to_owned(), automation["enabled"].clone());
-    for (key, value) in automation["trigger"].as_object().unwrap() {
-        root.insert(format!("/trigger/{key}"), value.clone());
-    }
-    let mut groups = vec![(
-        root.keys()
-            .map(|path| EditorLeaf {
-                path: path.clone(),
-                context: root.clone(),
-            })
-            .collect::<Vec<_>>(),
-        root.clone(),
-    )];
-    action_leaves(&automation["action"], &root, &mut groups);
-    groups
-}
-
-fn action_leaves(
-    node: &Value,
-    root: &BTreeMap<String, Value>,
-    groups: &mut Vec<(Vec<EditorLeaf>, BTreeMap<String, Value>)>,
-) {
-    let variant = node["type"].as_str().unwrap().to_owned();
-    let mut facts = BTreeMap::from([("/action/type".to_owned(), Value::String(variant.clone()))]);
-    let mut children = Vec::new();
-    for (key, value) in node.as_object().unwrap() {
-        match (variant.as_str(), key.as_str()) {
-            (_, "type") => {}
-            ("sequence", "children") => children.extend(value.as_array().unwrap().iter()),
-            ("conditional", "then" | "else") | ("repeat", "action") => children.push(value),
-            ("conditional", "condition") => {
-                for (field, leaf) in value.as_object().unwrap() {
-                    facts.insert(
-                        format!("/action/conditional/condition/{field}"),
-                        leaf.clone(),
-                    );
-                }
-            }
-            ("call", "args") => {
-                let prefix = format!(
-                    "/action/call/args/{}/{}",
-                    node["tool"].as_str().unwrap(),
-                    node["action"].as_str().unwrap()
-                );
-                flatten_arguments(&prefix, value, &mut facts);
-            }
-            _ => {
-                facts.insert(format!("/action/{variant}/{key}"), value.clone());
-            }
-        }
-    }
-    let mut context = root.clone();
-    context.extend(facts.clone());
-    groups.push((
-        facts
-            .keys()
-            .map(|path| EditorLeaf {
-                path: path.clone(),
-                context: context.clone(),
-            })
-            .collect(),
-        context,
-    ));
-    for child in children {
-        action_leaves(child, root, groups);
-    }
-}
-
-/// Fixed nested argument objects flatten by their exact wire names (S-UI-008).
-fn flatten_arguments(prefix: &str, value: &Value, facts: &mut BTreeMap<String, Value>) {
-    match value {
-        Value::Object(fields) => {
-            for (key, field) in fields {
-                flatten_arguments(&format!("{prefix}/{key}"), field, facts);
-            }
-        }
-        leaf => {
-            facts.insert(prefix.to_owned(), leaf.clone());
-        }
-    }
-}
-
-fn descriptor_visible(
-    descriptor: &contract::FieldDescriptor,
-    context: &BTreeMap<String, Value>,
-) -> bool {
-    descriptor.visible_when.iter().flatten().all(|condition| {
-        context.get(&condition.canonical_path).is_some_and(|value| {
-            condition
-                .values
-                .iter()
-                .any(|allowed| serde_json::to_value(allowed).unwrap() == *value)
-        })
-    })
-}
-
-#[tokio::test]
-async fn i9_g06_descriptors_drive_every_editable_field_of_a_saved_definition() {
-    let (core, _persistence) = make_core();
-    let descriptors = contract::automation_descriptors();
-    let definitions = [
-        json!({
-            "name": "wifi maintenance",
-            "enabled": false,
-            "trigger": {
-                "type": "event",
-                "name": "network.default_changed",
-                "match": {"transport": "wifi", "host_generation": 3},
-            },
-            "action": {"type": "sequence", "children": [
-                {"type": "call", "tool": "command", "action": "run", "args": {
-                    "command": "id", "run_as": "app", "cwd": "/data/local/tmp",
-                }},
-                {"type": "conditional",
-                    "condition": {"source": "state", "key": "reachable", "operator": "equals", "value": 1},
-                    "then": {"type": "call", "tool": "network", "action": "diagnose", "args": {
-                        "test": "tcp", "host": "example.com", "port": 443,
-                    }},
-                    "else": {"type": "set_state", "key": "reachable", "value": "unknown"},
-                },
-                {"type": "repeat", "count": 2, "action": {
-                    "type": "call", "tool": "android", "action": "launch", "args": {
-                        "operation": "component",
-                        "package_name": "com.example.app",
-                        "class_name": "com.example.app.Main",
-                    },
-                }},
-                {"type": "delay", "duration_ms": 1},
-            ]},
-        }),
-        json!({
-            "name": "weekday check",
-            "enabled": false,
-            "trigger": {
-                "type": "rrule",
-                "rrule": "DTSTART:20260914T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
-                "timezone": "Asia/Shanghai",
-            },
-            "action": {"type": "conditional",
-                "condition": {"source": "trigger", "key": "host", "operator": "exists"},
-                "then": {"type": "delay", "duration_ms": 1},
-            },
-        }),
-    ];
-
-    for (index, definition) in definitions.into_iter().enumerate() {
-        let saved = call(&core, 20 + index as u64, "save", definition).await;
-        let automation_id = result(&saved)["automation_id"].clone();
-        let fetched = call(
-            &core,
-            30 + index as u64,
-            "get",
-            json!({"automation_id": automation_id}),
-        )
-        .await;
-        let automation = &result(&fetched)["automation"];
-
-        for (leaves, context) in editor_leaves(automation) {
-            // Every saved scalar leaf is presented by exactly the descriptor active for it; the
-            // event match table owns its keys as one key_scalar_table field.
-            for leaf in &leaves {
-                let covered = descriptors.fields.iter().any(|descriptor| {
-                    descriptor.canonical_path == leaf.path
-                        && descriptor_visible(descriptor, &leaf.context)
-                });
-                assert!(
-                    covered,
-                    "case {index}: no active descriptor edits {}",
-                    leaf.path
-                );
-            }
-            // Every visible required descriptor of this node has a saved value to edit.
-            let node_is_action = context.contains_key("/action/type")
-                && leaves.iter().any(|leaf| leaf.path.starts_with("/action/"));
-            for descriptor in &descriptors.fields {
-                let in_node = if node_is_action {
-                    descriptor.canonical_path.starts_with("/action/")
-                } else {
-                    !descriptor.canonical_path.starts_with("/action/")
-                };
-                if in_node && descriptor.required && descriptor_visible(descriptor, &context) {
-                    assert!(
-                        leaves
-                            .iter()
-                            .any(|leaf| leaf.path == descriptor.canonical_path),
-                        "case {index}: visible required {} has no saved value",
-                        descriptor.canonical_path
-                    );
-                }
-            }
-        }
-    }
-}
-
 #[tokio::test]
 async fn i9_g08_delete_replays_its_original_result_and_removes_the_identity() {
     let (core, persistence) = make_core();
@@ -706,4 +499,201 @@ async fn i9_g08_delete_replays_its_original_result_and_removes_the_identity() {
     assert_eq!(error_code(&get), "NOT_FOUND");
     let listed = call(&core, 6, "list", json!({})).await;
     assert_eq!(result(&listed)["automations"], json!([]));
+}
+
+#[tokio::test]
+async fn i9_run_request_admits_one_manual_execution_and_keeps_the_due() {
+    let (core, persistence) = make_core();
+    let saved = call(
+        &core,
+        1,
+        "save",
+        definition(json!({"type": "interval", "every_ms": 3_600_000})),
+    )
+    .await;
+    let id = result(&saved)["automation_id"].clone();
+    let due = persistence.snapshot().automations[0].next_due_at.clone();
+
+    let requested = call(&core, 2, "run", json!({"automation_id": id})).await;
+    assert_eq!(result(&requested)["run_requested"], true);
+    let again = call(&core, 3, "run", json!({"automation_id": id})).await;
+    assert_eq!(error_code(&again), "ALREADY_EXISTS");
+
+    let requested = core.requested_automation_runs().await.unwrap();
+    assert_eq!(requested.len(), 1);
+    let admission = core
+        .admit_requested_run(&requested[0], COMMIT.to_owned())
+        .await
+        .unwrap();
+    let runtime::AutomationAdmission::Admitted(execution) = admission else {
+        panic!("a requested run is admitted: {admission:?}");
+    };
+    assert_eq!(
+        execution.trigger_facts.get("manual"),
+        Some(&contract::ScalarValue::Boolean(true))
+    );
+    let stored = persistence.snapshot();
+    assert_eq!(stored.automations[0].run_requested_at, None);
+    assert_eq!(stored.automations[0].next_due_at, due);
+    assert!(core.requested_automation_runs().await.unwrap().is_empty());
+
+    let busy = call(&core, 4, "run", json!({"automation_id": id})).await;
+    assert_eq!(error_code(&busy), "ALREADY_EXISTS");
+}
+
+#[tokio::test]
+async fn i9_element_steps_validate_their_text_and_wait() {
+    let (core, _) = make_core();
+    let element = |args: Value| {
+        json!({
+            "name": "element",
+            "enabled": true,
+            "trigger": {"type": "interval", "every_ms": 60_000},
+            "action": {"type": "call", "tool": "visual", "action": "element", "args": args},
+        })
+    };
+    let saved = call(
+        &core,
+        1,
+        "save",
+        element(json!({"operation": "tap", "by": "text", "value": "签到"})),
+    )
+    .await;
+    assert_eq!(
+        result(&saved)["action"]["args"]["wait_ms"],
+        10_000,
+        "the wait defaults to ten seconds"
+    );
+    for (index, rejected) in [
+        json!({"operation": "text", "by": "resource_id", "value": "input"}),
+        json!({"operation": "tap", "by": "text", "value": "a", "text": "b"}),
+        json!({"operation": "tap", "by": "text", "value": ""}),
+        json!({"operation": "tap", "by": "text", "value": "a", "wait_ms": 60_001}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = call(&core, 10 + index as u64, "save", element(rejected)).await;
+        assert_eq!(error_code(&response), "INVALID_ARGUMENT", "case {index}");
+    }
+}
+
+/// Answers each Call with the next scripted outcome and records visits.
+struct ScriptedEffects {
+    outcomes: Vec<Result<runtime::CallOutcome, domain::DomainError>>,
+    states: Vec<(String, contract::ScalarValue)>,
+}
+
+impl runtime::AutomationEffects for ScriptedEffects {
+    fn checkpoint(&mut self) -> Result<(), domain::DomainError> {
+        Ok(())
+    }
+
+    fn call<'a>(
+        &'a mut self,
+        _call: &'a contract::AutomationCompatibleCall,
+    ) -> runtime::PortFuture<'a, Result<runtime::CallOutcome, domain::DomainError>> {
+        let outcome = self.outcomes.remove(0);
+        Box::pin(async move { outcome })
+    }
+
+    fn set_state<'a>(
+        &'a mut self,
+        key: &'a str,
+        value: &'a contract::ScalarValue,
+    ) -> runtime::PortFuture<'a, Result<(), domain::DomainError>> {
+        self.states.push((key.to_owned(), value.clone()));
+        Box::pin(async { Ok(()) })
+    }
+
+    fn delay<'a>(
+        &'a mut self,
+        _duration_ms: u64,
+    ) -> runtime::PortFuture<'a, Result<(), domain::DomainError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn scripted_action(on_failure: &str, condition: Value) -> contract::AutomationAction {
+    serde_json::from_value(json!({
+        "type": "sequence",
+        "children": [
+            {"type": "call", "tool": "android", "action": "launch",
+             "args": {"operation": "package", "package_name": "com.example"},
+             "on_failure": on_failure},
+            {"type": "conditional", "condition": condition,
+             "then": {"type": "set_state", "key": "branch", "value": "then"},
+             "else": {"type": "set_state", "key": "branch", "value": "else"}},
+        ],
+    }))
+    .unwrap()
+}
+
+async fn run_scripted(
+    action: &contract::AutomationAction,
+    outcome: Result<runtime::CallOutcome, domain::DomainError>,
+) -> (
+    Result<(), domain::DomainError>,
+    Vec<(String, contract::ScalarValue)>,
+) {
+    let mut effects = ScriptedEffects {
+        outcomes: vec![outcome],
+        states: Vec::new(),
+    };
+    let run = runtime::AutomationInterpreter
+        .execute(action, &mut BTreeMap::new(), &BTreeMap::new(), &mut effects)
+        .await;
+    (run, effects.states)
+}
+
+fn branch(value: &str) -> Vec<(String, contract::ScalarValue)> {
+    vec![(
+        "branch".to_owned(),
+        contract::ScalarValue::String(value.to_owned()),
+    )]
+}
+
+#[tokio::test]
+async fn i9_a_continued_failure_is_readable_as_the_previous_result() {
+    let failed = || {
+        Err(domain::DomainError::new(
+            contract::ErrorCode::NotFound,
+            "no element matches",
+        ))
+    };
+    let succeeded =
+        json!({"source": "result", "key": "succeeded", "operator": "equals", "value": true});
+    let (run, states) =
+        run_scripted(&scripted_action("continue", succeeded.clone()), failed()).await;
+    assert!(run.is_ok());
+    assert_eq!(states, branch("else"));
+
+    let code = json!({"source": "result", "key": "error_code", "operator": "equals", "value": "NOT_FOUND"});
+    let (_, states) = run_scripted(&scripted_action("continue", code), failed()).await;
+    assert_eq!(states, branch("then"));
+
+    let (_, states) = run_scripted(
+        &scripted_action("stop", succeeded.clone()),
+        Ok(runtime::CallOutcome::default()),
+    )
+    .await;
+    assert_eq!(states, branch("then"));
+
+    // A failure the step does not continue past ends the run before the condition.
+    let (run, states) = run_scripted(&scripted_action("stop", succeeded), failed()).await;
+    assert_eq!(run.unwrap_err().code, contract::ErrorCode::NotFound);
+    assert!(states.is_empty());
+
+    // A command that exited non-zero is a failed step that still reports its exit code.
+    let exit = json!({"source": "result", "key": "exit_code", "operator": "equals", "value": 3});
+    let (run, states) = run_scripted(
+        &scripted_action("continue", exit),
+        Ok(runtime::CallOutcome {
+            failure: Some(contract::ErrorCode::ExecutionFailed),
+            exit_code: Some(3),
+        }),
+    )
+    .await;
+    assert!(run.is_ok());
+    assert_eq!(states, branch("then"));
 }

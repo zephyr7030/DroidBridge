@@ -60,10 +60,6 @@ internal object ShizukuGuardedPlanCodec {
                 requireKeys(objectValue)
                 ShizukuGuardedPlan("/system/bin/screencap", listOf("-p"), "/", 5_000, MAX_OUTPUT_BYTES)
             }
-            "screen_capture_raw" -> {
-                requireKeys(objectValue)
-                ShizukuGuardedPlan("/system/bin/screencap", emptyList(), "/", 5_000, MAX_RAW_FRAME_BYTES)
-            }
             "input_tap" -> inputTap(objectValue)
             "input_long_press" -> inputLongPress(objectValue)
             "input_swipe" -> inputSwipe(objectValue)
@@ -276,7 +272,6 @@ internal object ShizukuGuardedPlanCodec {
 
     private const val MAX_PAYLOAD_BYTES = 65_536
     private const val MAX_OUTPUT_BYTES = 8 * 1_024 * 1_024
-    private const val MAX_RAW_FRAME_BYTES = 64 * 1_024 * 1_024 + 16
     private const val COMMAND_PROGRAM = "/system/bin/sh"
     private const val COMMAND_MAX_BYTES = 32_768
     private const val COMMAND_MIN_TIMEOUT_MS = 1_000

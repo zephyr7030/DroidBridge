@@ -106,6 +106,10 @@
     },
     {
       "maximum_escaped_terminal_bytes": 262144,
+      "operation": "automation.run"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
       "operation": "task_control.list"
     },
     {

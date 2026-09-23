@@ -1,5 +1,6 @@
 package com.droidbridge.android.ui.home
 
+import com.droidbridge.android.product.runtime.PublicResult
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
@@ -45,20 +46,28 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.compose.material3.Badge
+import androidx.compose.foundation.Image
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.drawable.toBitmap
 import com.droidbridge.android.R
+import com.droidbridge.android.product.tasks.TaskSummary
+import com.droidbridge.android.ui.tasks.TaskRow
+import com.droidbridge.android.ui.common.RowIcon
 import com.droidbridge.android.client.CapabilityRow
 import com.droidbridge.android.client.ClientState
 import com.droidbridge.android.client.DroidBridgeClient
 import com.droidbridge.android.client.RuntimeReadiness
 import com.droidbridge.android.product.home.HomeMcpRow
 import com.droidbridge.android.product.home.HomeProjection
+import com.droidbridge.android.product.home.HomeUsability
 import com.droidbridge.android.product.mcp.McpSettingsReplies
 import com.droidbridge.android.product.mcp.TunnelSettingsReplies
 import com.droidbridge.android.product.mcp.TunnelRuntimeState
 import com.droidbridge.android.product.mcp.TunnelSettingsView
 import com.droidbridge.android.product.tasks.TaskFilter
 import com.droidbridge.android.product.tasks.TaskRepository
-import com.droidbridge.android.product.tasks.TaskResult
 import com.droidbridge.android.ui.CapabilityListItem
 import com.droidbridge.android.ui.common.ReasonText
 import com.droidbridge.android.ui.common.RefreshIndicator
@@ -78,9 +87,10 @@ import kotlinx.coroutines.launch
 
 /** The Home facts read from their owners; the Runtime status comes from the client snapshot. */
 data class HomeProjectionState(
-    val activeTasks: String,
     val activeTaskCount: Int,
     val mcp: HomeMcpRow,
+    /** Running work first, then the most recent Tasks that ended. */
+    val tasks: List<TaskSummary> = emptyList(),
 )
 
 data class HomeUiState(
@@ -91,8 +101,9 @@ data class HomeUiState(
     /** The tunnel is the other connection way; the one agent-connection row states whether either is up. */
     val tunnel: TunnelSettingsView? = null,
     val tunnelFailed: Boolean = false,
-    /** Executions a lost instance left running, which keep the Magisk daemon from starting. */
-    val strandedExecutions: Int = 0,
+    /** Executions a lost instance left running, when that authority has answered. */
+    val strandedExecutions: Int? = null,
+    val strandedReadFailed: Boolean = false,
     val clearingStranded: Boolean = false,
     /** The error token of the last clear that did not succeed. */
     val strandedClearError: String? = null,
@@ -110,26 +121,30 @@ class HomeViewModel(
         if (!quiet) mutableState.update { it.copy(refreshing = true) }
         viewModelScope.launch {
             val active = async { tasks.list(TaskFilter.Active, HomeProjection.TASK_PAGE_LIMIT) }
+            val ended = async { tasks.list(TaskFilter.Completed, HomeProjection.ENDED_TASK_LIMIT) }
             val mcp = async { runCatching { client.mcpSettings() }.getOrNull()?.let(McpSettingsReplies::settings) }
             val tunnel = async { runCatching { client.tunnelSettings() }.getOrNull() }
-            val stranded = async { runCatching { client.strandedExecutions() }.getOrDefault(0) }
-            val activeTasks = active.await() as? TaskResult.Success
+            val stranded = async { runCatching { client.strandedExecutions() }.getOrNull() }
+            val activeTasks = active.await() as? PublicResult.Success
+            val endedTasks = ended.await() as? PublicResult.Success
             val settings = mcp.await()
             val tunnelSettings = tunnel.await()?.let(TunnelSettingsReplies::settings)
+            val strandedExecutions = stranded.await()?.coerceAtLeast(0)
             mutableState.update { current ->
                 val tunnelFacts = current.copy(
                     tunnel = tunnelSettings ?: current.tunnel,
                     tunnelFailed = tunnelSettings == null,
-                    strandedExecutions = stranded.await().coerceAtLeast(0),
+                    strandedExecutions = strandedExecutions ?: current.strandedExecutions,
+                    strandedReadFailed = strandedExecutions == null,
                 )
-                if (activeTasks == null || settings == null) {
+                if (activeTasks == null || endedTasks == null || settings == null) {
                     tunnelFacts.copy(refreshing = false, loadFailed = current.projection == null)
                 } else {
                     tunnelFacts.copy(
                         projection = HomeProjectionState(
-                            activeTasks = HomeProjection.countLabel(activeTasks.value.size, HomeProjection.TASK_PAGE_LIMIT),
                             activeTaskCount = activeTasks.value.size,
                             mcp = HomeProjection.mcpRow(settings),
+                            tasks = activeTasks.value + endedTasks.value,
                         ),
                         loadFailed = false,
                         refreshing = false,
@@ -163,8 +178,10 @@ fun HomeRoute(
     viewModel: HomeViewModel,
     clientState: ClientState,
     attention: List<CapabilityRow>,
+    checking: Boolean,
     onCapabilityAction: (CapabilityRow) -> Unit,
     newerVersionAvailable: Boolean,
+    openTask: (String) -> Unit,
     open: (HomeDestination) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -174,16 +191,30 @@ fun HomeRoute(
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                delay(HOME_POLL_MILLIS)
+                // A Runtime that is still starting answers nothing yet, so the first read is
+                // retried quickly and the page settles as soon as the Runtime is up.
+                delay(if (state.projection == null) HOME_STARTUP_POLL_MILLIS else HOME_POLL_MILLIS)
                 viewModel.refresh(quiet = true)
             }
         }
+    }
+    // A Runtime that has not started yet reports itself unavailable, which is indistinguishable
+    // from one that cannot start until this grace passes; until then Home reads as loading.
+    var startupGracePassed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(HOME_STARTUP_GRACE_MILLIS)
+        startupGracePassed = true
     }
     Scaffold(
         modifier = Modifier.testTag("route:Home"),
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppIcon(Modifier.size(32.dp))
+                        Text(stringResource(R.string.app_name), modifier = Modifier.padding(start = 12.dp))
+                    }
+                },
                 actions = { if (showsRefresh(state.projection != null, state.refreshing)) RefreshIndicator("home") },
             )
         },
@@ -193,8 +224,14 @@ fun HomeRoute(
             // A daemon that refuses to start leaves Home unreadable, which is exactly when the
             // recovery has to be reachable, so the card also stands above the error and loading states.
             val runtimeReady = (clientState as? ClientState.Available)?.snapshot?.readiness == RuntimeReadiness.Ready
-            val showStranded = state.strandedExecutions > 0 && !runtimeReady
-            when (routeContent(projection != null, state.loadFailed)) {
+            // Reads fail while the App is still binding and the Runtime still starting; that is
+            // loading, and only a Runtime that reports itself unavailable makes them errors.
+            val starting = clientState is ClientState.Connecting || clientState is ClientState.Disconnected ||
+                (clientState as? ClientState.Available)?.snapshot?.readiness == RuntimeReadiness.Initializing ||
+                !startupGracePassed
+            val showStranded = (state.strandedExecutions ?: 0) > 0 && !runtimeReady
+            val showStrandedReadError = state.strandedReadFailed && !runtimeReady && !starting
+            when (routeContent(projection != null, state.loadFailed && !starting)) {
                 RouteContent.Error, RouteContent.Loading -> Column(
                     Modifier.fillMaxSize().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -202,14 +239,22 @@ fun HomeRoute(
                     if (showStranded) {
                         StrandedExecutionsCard(state.clearingStranded, state.strandedClearError, viewModel::clearStrandedExecutions)
                     }
+                    if (showStrandedReadError) {
+                        StrandedReadErrorCard { viewModel.refresh() }
+                    }
                     Box(Modifier.weight(1f)) {
-                        if (projection == null && state.loadFailed) RouteError("home") { viewModel.refresh() } else RouteLoading("home")
+                        if (projection == null && state.loadFailed && !starting) {
+                            RouteError("home") { viewModel.refresh() }
+                        } else {
+                            RouteLoading("home")
+                        }
                     }
                 }
                 RouteContent.Empty, RouteContent.Content ->
                     HomeContent(
-                        requireNotNull(projection), state, clientState, attention, onCapabilityAction,
+                        requireNotNull(projection), state, clientState, attention, checking, onCapabilityAction,
                         newerVersionAvailable, open, viewModel::clearStrandedExecutions,
+                        { viewModel.refresh() }, openTask,
                     )
             }
         }
@@ -222,10 +267,13 @@ private fun HomeContent(
     state: HomeUiState,
     clientState: ClientState,
     attention: List<CapabilityRow>,
+    checking: Boolean,
     onCapabilityAction: (CapabilityRow) -> Unit,
     newerVersionAvailable: Boolean,
     open: (HomeDestination) -> Unit,
     clearStranded: () -> Unit,
+    refreshStranded: () -> Unit,
+    openTask: (String) -> Unit,
 ) {
     val snapshot = (clientState as? ClientState.Available)?.snapshot
     val slot = HomeProjection.updateSlot(snapshot?.compatibility.orEmpty(), newerVersionAvailable)
@@ -240,10 +288,17 @@ private fun HomeContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { StatusCard(clientState) { open(HomeDestination.Diagnostics) } }
+        item {
+            StatusCard(clientState, HomeProjection.usability(agentState, attention.size, checking)) {
+                open(HomeDestination.Diagnostics)
+            }
+        }
         // Only while the Runtime is not ready: a live Runtime settles its own executions.
-        if (state.strandedExecutions > 0 && snapshot?.readiness != RuntimeReadiness.Ready) {
+        if ((state.strandedExecutions ?: 0) > 0 && snapshot?.readiness != RuntimeReadiness.Ready) {
             item { StrandedExecutionsCard(state.clearingStranded, state.strandedClearError, clearStranded) }
+        }
+        if (state.strandedReadFailed && snapshot?.readiness != RuntimeReadiness.Ready) {
+            item { StrandedReadErrorCard(refreshStranded) }
         }
         item {
             Column {
@@ -252,10 +307,11 @@ private fun HomeContent(
                     attention.forEach { row -> CapabilityListItem(row, refreshing = false, colors = transparent) { onCapabilityAction(row) } }
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.capabilities_title)) },
-                        supportingContent = if (attention.isEmpty()) ({ Text(stringResource(R.string.home_all_ready)) }) else null,
-                        leadingContent = if (attention.isEmpty()) ({
-                            Icon(painterResource(R.drawable.ic_status_success), contentDescription = null)
+                        // A step still being determined asks for nothing yet, which is not the same as done.
+                        supportingContent = if (attention.isEmpty()) ({
+                            Text(stringResource(if (checking) R.string.capabilities_checking else R.string.home_all_ready))
                         }) else null,
+                        leadingContent = { RowIcon(R.drawable.ic_verified_user) },
                         colors = transparent,
                         modifier = Modifier.clickable { open(HomeDestination.Capabilities) }.testTag("home:capabilities"),
                     )
@@ -267,6 +323,7 @@ private fun HomeContent(
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.agent_connection_title)) },
                     supportingContent = { Text(agentConnectionLabel(agentState)) },
+                    leadingContent = { RowIcon(R.drawable.ic_smart_toy) },
                     colors = transparent,
                     modifier = Modifier.clickable { open(HomeDestination.AgentConnections) }.testTag("home:agent"),
                 )
@@ -284,12 +341,39 @@ private fun HomeContent(
                 }
             }
         }
+        item(key = "tasks:title") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionTitle(R.string.nav_tasks)
+                if (projection.activeTaskCount > 0) {
+                    Badge(modifier = Modifier.padding(start = 8.dp).testTag("home:tasks:badge")) {
+                        Text(HomeProjection.countLabel(projection.activeTaskCount, HomeProjection.TASK_PAGE_LIMIT))
+                    }
+                }
+            }
+        }
+        if (projection.tasks.isEmpty()) {
+            item(key = "tasks:empty") {
+                GroupCard {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.tasks_empty)) },
+                        colors = transparent,
+                        modifier = Modifier.testTag("home:tasks:empty"),
+                    )
+                }
+            }
+        } else {
+            item(key = "tasks") {
+                GroupCard {
+                    projection.tasks.forEach { task -> TaskRow(task, transparent) { openTask(task.taskId) } }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun StatusCard(clientState: ClientState, open: () -> Unit) {
-    val status = runtimeStatus(clientState)
+private fun StatusCard(clientState: ClientState, usability: HomeUsability, open: () -> Unit) {
+    val status = runtimeStatus(clientState, usability)
     val colors = MaterialTheme.colorScheme
     Card(
         onClick = open,
@@ -354,7 +438,27 @@ private fun StrandedExecutionsCard(clearing: Boolean, error: String?, clear: () 
     }
 }
 
+@Composable
+private fun StrandedReadErrorCard(retry: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        modifier = Modifier.fillMaxWidth().testTag("home:stranded:read-error"),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.state_error), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = retry) { Text(stringResource(R.string.action_retry)) }
+        }
+    }
+}
+
 private const val HOME_POLL_MILLIS = 5_000L
+/** While Home has no projection yet, the Runtime is most likely still starting. */
+private const val HOME_STARTUP_POLL_MILLIS = 1_000L
+private const val HOME_STARTUP_GRACE_MILLIS = 30_000L
 
 @Composable
 private fun SectionTitle(@StringRes title: Int) {
@@ -378,13 +482,29 @@ private enum class StatusTone { Ready, Pending, Failed }
 
 private data class RuntimeStatus(@StringRes val label: Int, @DrawableRes val icon: Int, val tone: StatusTone)
 
-private fun runtimeStatus(clientState: ClientState): RuntimeStatus = when (clientState) {
+private fun runtimeStatus(clientState: ClientState, usability: HomeUsability): RuntimeStatus = when (clientState) {
     is ClientState.Available -> when (clientState.snapshot.readiness) {
-        RuntimeReadiness.Ready -> RuntimeStatus(R.string.state_ready, R.drawable.ic_status_success, StatusTone.Ready)
+        RuntimeReadiness.Ready -> when (usability) {
+            HomeUsability.Usable -> RuntimeStatus(R.string.home_state_usable, R.drawable.ic_status_success, StatusTone.Ready)
+            HomeUsability.NoAgentConnected ->
+                RuntimeStatus(R.string.home_state_no_agent, R.drawable.ic_status_unknown, StatusTone.Pending)
+            HomeUsability.NeedsAttention ->
+                RuntimeStatus(R.string.home_attention, R.drawable.ic_status_error, StatusTone.Pending)
+            HomeUsability.Checking ->
+                RuntimeStatus(R.string.capabilities_checking, R.drawable.ic_status_schedule, StatusTone.Pending)
+        }
         RuntimeReadiness.Initializing -> RuntimeStatus(R.string.state_starting, R.drawable.ic_status_schedule, StatusTone.Pending)
         RuntimeReadiness.Unavailable -> RuntimeStatus(R.string.state_unavailable, R.drawable.ic_status_error, StatusTone.Failed)
     }
     ClientState.Connecting, ClientState.Disconnected ->
         RuntimeStatus(R.string.state_starting, R.drawable.ic_status_schedule, StatusTone.Pending)
     is ClientState.Unavailable -> RuntimeStatus(R.string.state_unavailable, R.drawable.ic_status_error, StatusTone.Failed)
+}
+
+/** The launcher icon, so Home carries the App's own mark beside its name. */
+@Composable
+private fun AppIcon(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val icon = remember { context.packageManager.getApplicationIcon(context.packageName).toBitmap().asImageBitmap() }
+    Image(icon, contentDescription = null, modifier = modifier)
 }

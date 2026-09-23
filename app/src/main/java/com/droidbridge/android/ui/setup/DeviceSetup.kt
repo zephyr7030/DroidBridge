@@ -14,7 +14,6 @@ import android.os.PowerManager
 import android.provider.Settings
 import com.droidbridge.android.BuildConfig
 import com.droidbridge.android.client.BackgroundFacts
-import com.droidbridge.android.runtimehost.DroidBridgeNotificationListenerService
 import java.io.File
 
 /**
@@ -35,6 +34,9 @@ object DeviceSetup {
     /** A root manager or an `su` file is present. `su` itself is never run: that would prompt the user. */
     fun rootDetected(context: Context): Boolean =
         ROOT_MANAGERS.any { installed(context, it) } || SU_PATHS.any { runCatching { File(it).exists() }.getOrDefault(false) }
+
+    /** The Shizuku app is installed; whether it runs and authorizes this App is a Runtime fact. */
+    fun shizukuInstalled(context: Context): Boolean = installed(context, SHIZUKU_MANAGER)
 
     /** Installed from a file or browser rather than a store, so Android restricts its accessibility switch. */
     fun restrictedSettingsApply(context: Context): Boolean = Build.VERSION.SDK_INT >= 33 && runCatching {
@@ -66,8 +68,8 @@ object DeviceSetup {
         open(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
-    fun openNotificationAccess(context: Context) {
-        val component = ComponentName(context, DroidBridgeNotificationListenerService::class.java).flattenToString()
+    fun openNotificationAccess(context: Context, listener: ComponentName) {
+        val component = listener.flattenToString()
         open(
             context,
             Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
@@ -76,7 +78,7 @@ object DeviceSetup {
         )
     }
 
-    /** The project's release page, where the Magisk module ZIP is published. */
+    /** The project's release page, where the Magisk/KernelSU-compatible module ZIP is published. */
     fun openModuleDownload(context: Context) {
         open(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}/releases/latest")))
     }
@@ -127,6 +129,8 @@ object DeviceSetup {
         ApplicationExitInfo.REASON_OTHER,
         REASON_FREEZER,
     )
+
+    private const val SHIZUKU_MANAGER = "moe.shizuku.privileged.api"
 
     private val ROOT_MANAGERS = listOf(
         "com.topjohnwu.magisk",

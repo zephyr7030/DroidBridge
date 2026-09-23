@@ -1,7 +1,7 @@
 package com.droidbridge.android
 
+import com.droidbridge.android.product.runtime.PublicResult
 import com.droidbridge.android.product.automation.AutomationRepository
-import com.droidbridge.android.product.automation.AutomationResult
 import com.droidbridge.android.product.automation.BulkDeleteOutcome
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -41,7 +41,7 @@ class I9_AutomationRepositoryTest {
         )
 
         assertEquals(
-            AutomationResult.Success(BulkDeleteOutcome(deleted = 2, failed = 1)),
+            PublicResult.Success(BulkDeleteOutcome(deleted = 2, failed = 1)),
             repository.deleteAll(),
         )
         assertEquals(500, requests.first().input()["limit"]!!.jsonPrimitive.content.toInt())
@@ -62,12 +62,12 @@ class I9_AutomationRepositoryTest {
                     .encodeToByteArray()
             },
         ).save(JsonObject(emptyMap()))
-        val failure = rejected as AutomationResult.Failure
+        val failure = rejected as PublicResult.Failure
         assertEquals("INVALID_ARGUMENT", failure.error.code)
         assertEquals("trigger.at is in the past", failure.error.message)
 
         val lost = AutomationRepository(submit = { error("binder died") }).list()
-        assertEquals("RUNTIME_UNAVAILABLE", (lost as AutomationResult.Failure).error.code)
+        assertEquals("RUNTIME_UNAVAILABLE", (lost as PublicResult.Failure).error.code)
     }
 
     private fun JsonObject.input(): JsonObject =

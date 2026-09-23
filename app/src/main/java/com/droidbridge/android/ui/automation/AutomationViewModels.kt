@@ -1,29 +1,31 @@
 package com.droidbridge.android.ui.automation
 
+import com.droidbridge.android.product.runtime.PublicError
+import com.droidbridge.android.product.runtime.PublicResult
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.droidbridge.android.product.automation.ACTION_PREFIX
-import com.droidbridge.android.product.automation.ActionDraft
-import com.droidbridge.android.product.automation.AutomationDescriptorCatalog
-import com.droidbridge.android.product.automation.AutomationDraft
-import com.droidbridge.android.product.automation.AutomationError
+import com.droidbridge.android.product.automation.AutomationDetail
+import com.droidbridge.android.product.automation.AutomationPlan
+import com.droidbridge.android.product.automation.AutomationPlans
 import com.droidbridge.android.product.automation.AutomationRepository
-import com.droidbridge.android.product.automation.AutomationResult
 import com.droidbridge.android.product.automation.AutomationRow
-import com.droidbridge.android.product.automation.AutomationWire
 import com.droidbridge.android.product.automation.BulkDeleteOutcome
-import com.droidbridge.android.product.automation.DescriptorSection
+import com.droidbridge.android.product.automation.PlanStep
+import com.droidbridge.android.product.automation.PlanTrigger
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /** Presentation state only; the canonical list is requeried whenever the route is entered. */
 data class AutomationListUiState(
@@ -40,15 +42,21 @@ class AutomationListViewModel(private val repository: AutomationRepository) : Vi
     val state: StateFlow<AutomationListUiState> = mutableState.asStateFlow()
 
     fun refresh() {
-        viewModelScope.launch { load() }
+        viewModelScope.launch {
+            // A Runtime that is still starting answers nothing yet, so the first list is retried
+            // for as long as a start takes before the page reports it cannot be read.
+            repeat(STARTUP_ATTEMPTS) { attempt ->
+                load()
+                if (state.value.rows != null) return@launch
+                if (attempt + 1 < STARTUP_ATTEMPTS) delay(STARTUP_RETRY_MILLIS)
+            }
+        }
     }
 
     /** The switch writes only the canonical enabled flag, then shows the requeried truth. */
     fun setEnabled(row: AutomationRow, enabled: Boolean) {
         viewModelScope.launch {
-            // A rejected mutation (for example a revision conflict) is visible as the unchanged
-            // canonical switch state the reload presents.
-            repository.setEnabled(row, enabled)
+            repository.setEnabled(row.automationId, row.revision, enabled)
             load()
         }
     }
@@ -69,8 +77,8 @@ class AutomationListViewModel(private val repository: AutomationRepository) : Vi
             mutableState.update {
                 it.copy(
                     bulkDeleteActive = false,
-                    bulkResult = (outcome as? AutomationResult.Success)?.value,
-                    loadFailed = it.loadFailed || outcome is AutomationResult.Failure,
+                    bulkResult = (outcome as? PublicResult.Success)?.value,
+                    loadFailed = it.loadFailed || outcome is PublicResult.Failure,
                 )
             }
         }
@@ -78,20 +86,22 @@ class AutomationListViewModel(private val repository: AutomationRepository) : Vi
 
     fun consumeBulkResult() = mutableState.update { it.copy(bulkResult = null) }
 
+    private companion object {
+        const val STARTUP_ATTEMPTS = 30
+        const val STARTUP_RETRY_MILLIS = 1_000L
+    }
+
     private suspend fun load() {
         mutableState.update { it.copy(refreshing = true) }
         when (val listed = repository.list()) {
-            is AutomationResult.Failure -> mutableState.update {
+            is PublicResult.Failure -> mutableState.update {
                 // A failed refresh keeps the last immutable projection visible (S-UI-014).
                 it.copy(refreshing = false, loadFailed = it.rows == null)
             }
-            is AutomationResult.Success -> {
+            is PublicResult.Success -> {
                 val rows = listed.value.map { row ->
-                    val fetched = repository.get(row.automationId) as? AutomationResult.Success
-                    row.copy(
-                        triggerType = fetched?.value?.get("trigger")?.jsonObject
-                            ?.get("type")?.jsonPrimitive?.contentOrNull,
-                    )
+                    val fetched = repository.get(row.automationId) as? PublicResult.Success
+                    row.copy(trigger = fetched?.value?.automation?.get("trigger")?.jsonObject)
                 }
                 mutableState.update { it.copy(rows = rows, refreshing = false, loadFailed = false) }
             }
@@ -99,196 +109,230 @@ class AutomationListViewModel(private val repository: AutomationRepository) : Vi
     }
 }
 
-/** One step from an action node to a recursive action-tree slot. */
-sealed interface NodeStep {
-    data class Child(val index: Int) : NodeStep
-    data object Then : NodeStep
-    data object Else : NodeStep
-    data object Repeated : NodeStep
+data class AutomationDetailUiState(
+    val detail: AutomationDetail? = null,
+    val loadError: PublicError? = null,
+    val runStarted: Boolean = false,
+    val runError: PublicError? = null,
+    val deleteDialog: Boolean = false,
+    val deleted: Boolean = false,
+) {
+    /** The template this Automation is editable as, or null when only an AI can change it. */
+    val plan: AutomationPlan? get() = detail?.let { AutomationPlans.decode(it.automation) }
+}
+
+class AutomationDetailViewModel(
+    private val repository: AutomationRepository,
+    private val automationId: String,
+) : ViewModel() {
+    private val mutableState = MutableStateFlow(AutomationDetailUiState())
+    val state: StateFlow<AutomationDetailUiState> = mutableState.asStateFlow()
+
+    fun refresh() {
+        viewModelScope.launch { load() }
+    }
+
+    fun setEnabled(enabled: Boolean) {
+        val detail = state.value.detail ?: return
+        viewModelScope.launch {
+            repository.setEnabled(detail.automationId, detail.revision, enabled)
+            load()
+        }
+    }
+
+    /** Requests one run, then follows the history while that run is admitted and settles. */
+    fun runNow() {
+        viewModelScope.launch {
+            when (val requested = repository.run(automationId)) {
+                is PublicResult.Failure -> mutableState.update { it.copy(runError = requested.error) }
+                is PublicResult.Success -> {
+                    mutableState.update { it.copy(runStarted = true) }
+                    val previous = state.value.detail?.history?.firstOrNull()?.taskId
+                    repeat(RUN_FOLLOW_POLLS) {
+                        delay(RUN_FOLLOW_INTERVAL_MS)
+                        load()
+                        val newest = state.value.detail?.history?.firstOrNull()
+                        if (newest != null && newest.taskId != previous && newest.state !in ACTIVE_STATES) {
+                            return@launch
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun consumeRunFeedback() = mutableState.update { it.copy(runStarted = false, runError = null) }
+
+    fun consumeLeave() = mutableState.update { it.copy(deleted = false, loadError = null) }
+
+    fun requestDelete() = mutableState.update { it.copy(deleteDialog = true) }
+
+    fun dismissDelete() = mutableState.update { it.copy(deleteDialog = false) }
+
+    fun confirmDelete() {
+        val detail = state.value.detail ?: return
+        mutableState.update { it.copy(deleteDialog = false) }
+        viewModelScope.launch {
+            when (val deleted = repository.delete(detail.automationId, detail.revision)) {
+                is PublicResult.Success -> mutableState.update { it.copy(deleted = true) }
+                is PublicResult.Failure -> {
+                    mutableState.update { it.copy(runError = deleted.error) }
+                    load()
+                }
+            }
+        }
+    }
+
+    private suspend fun load() {
+        when (val fetched = repository.get(automationId, HISTORY_LIMIT)) {
+            is PublicResult.Success -> mutableState.update { it.copy(detail = fetched.value, loadError = null) }
+            is PublicResult.Failure -> mutableState.update { it.copy(loadError = fetched.error) }
+        }
+    }
+
+    private companion object {
+        const val HISTORY_LIMIT = 20
+        const val RUN_FOLLOW_POLLS = 30
+        const val RUN_FOLLOW_INTERVAL_MS = 1_000L
+        val ACTIVE_STATES = setOf("queued", "running")
+    }
+}
+
+/** A problem the editor shows before saving; the Runtime still validates everything it saves. */
+sealed interface PlanProblem {
+    data object NameRequired : PlanProblem
+    data object StepsRequired : PlanProblem
+    data class StepIncomplete(val number: Int) : PlanProblem
+    data object OncePast : PlanProblem
+    data object WeeklyDays : PlanProblem
+    data object Interval : PlanProblem
+    data class SaveFailed(val error: PublicError) : PlanProblem
 }
 
 data class AutomationEditorUiState(
-    val draft: AutomationDraft? = null,
-    val loadError: AutomationError? = null,
+    val plan: AutomationPlan? = null,
+    /** The plan as loaded or last saved, so leaving with changes asks first. */
+    val saved: AutomationPlan? = null,
+    val loadError: PublicError? = null,
+    val problem: PlanProblem? = null,
     val saving: Boolean = false,
-    val validationError: AutomationError? = null,
-    val deleteDialog: Boolean = false,
     val finished: Boolean = false,
-)
+) {
+    val dirty: Boolean get() = plan != null && plan != saved
+}
 
 class AutomationEditorViewModel(
     private val repository: AutomationRepository,
-    private val catalog: AutomationDescriptorCatalog,
     private val automationId: String?,
+    private val zone: () -> ZoneId = ZoneId::systemDefault,
+    private val now: () -> LocalDateTime = LocalDateTime::now,
 ) : ViewModel() {
+    private var revision: Long? = null
     private val mutableState = MutableStateFlow(AutomationEditorUiState())
     val state: StateFlow<AutomationEditorUiState> = mutableState.asStateFlow()
 
     init {
         if (automationId == null) {
-            mutableState.value = AutomationEditorUiState(draft = normalized(AutomationDraft.new()))
+            val blank = AutomationPlan(
+                name = "",
+                enabled = true,
+                trigger = PlanTrigger.Daily(LocalTime.of(8, 0)),
+                steps = emptyList(),
+            )
+            mutableState.update { it.copy(plan = blank, saved = blank) }
         } else {
-            load(automationId)
+            retry()
         }
     }
 
     fun retry() {
-        automationId?.let(::load)
-    }
-
-    fun setRootValue(path: String, value: JsonElement?) = editDraft { draft ->
-        draft.copy(values = draft.values.with(path, value))
-    }
-
-    fun setNodeValue(ref: List<NodeStep>, path: String, value: JsonElement?) = editNode(ref) { node ->
-        node.copy(values = node.values.with(path, value))
-    }
-
-    /** A new action type starts a fresh node, discarding the inactive variant's input. */
-    fun changeNodeType(ref: List<NodeStep>, type: String) = editNode(ref) { node ->
-        if (node.type == type) node else ActionDraft.ofType(type)
-    }
-
-    fun addChild(ref: List<NodeStep>, type: String) = editNode(ref) { node ->
-        node.copy(children = node.children + ActionDraft.ofType(type))
-    }
-
-    fun moveChild(ref: List<NodeStep>, index: Int, delta: Int) = editNode(ref) { node ->
-        val target = index + delta
-        if (target !in node.children.indices) return@editNode node
-        node.copy(
-            children = node.children.toMutableList().also { children ->
-                children[index] = node.children[target]
-                children[target] = node.children[index]
-            },
-        )
-    }
-
-    fun removeChild(ref: List<NodeStep>, index: Int) = editNode(ref) { node ->
-        node.copy(children = node.children.filterIndexed { position, _ -> position != index })
-    }
-
-    fun setSlot(ref: List<NodeStep>, slot: NodeStep, type: String?) = editNode(ref) { node ->
-        val child = type?.let(ActionDraft::ofType)
-        when (slot) {
-            NodeStep.Then -> node.copy(thenAction = child)
-            NodeStep.Else -> node.copy(elseAction = child)
-            NodeStep.Repeated -> node.copy(repeatedAction = child)
-            is NodeStep.Child -> node
-        }
-    }
-
-    /** Saves exactly the visible descriptor fields; the Contract result owns every validation. */
-    fun save() {
-        val draft = state.value.draft ?: return
-        if (state.value.saving) return
-        mutableState.update { it.copy(saving = true, validationError = null) }
-        viewModelScope.launch {
-            when (val saved = repository.save(AutomationWire.saveInput(catalog, draft))) {
-                is AutomationResult.Success -> mutableState.update { it.copy(saving = false, finished = true) }
-                is AutomationResult.Failure -> mutableState.update {
-                    it.copy(saving = false, validationError = saved.error)
-                }
-            }
-        }
-    }
-
-    fun requestDelete() {
-        if (state.value.draft?.automationId != null) mutableState.update { it.copy(deleteDialog = true) }
-    }
-
-    fun dismissDelete() = mutableState.update { it.copy(deleteDialog = false) }
-
-    fun confirmDelete() {
-        val draft = state.value.draft ?: return
-        val id = draft.automationId ?: return
-        val revision = draft.expectedRevision ?: return
-        mutableState.update { it.copy(deleteDialog = false, saving = true) }
-        viewModelScope.launch {
-            when (val deleted = repository.delete(id, revision)) {
-                is AutomationResult.Success -> mutableState.update { it.copy(saving = false, finished = true) }
-                is AutomationResult.Failure -> mutableState.update {
-                    it.copy(saving = false, validationError = deleted.error)
-                }
-            }
-        }
-    }
-
-    private fun load(id: String) {
-        mutableState.update { it.copy(loadError = null) }
+        val id = automationId ?: return
         viewModelScope.launch {
             when (val fetched = repository.get(id)) {
-                is AutomationResult.Success -> mutableState.update {
-                    it.copy(draft = normalized(AutomationWire.draftOf(fetched.value)), loadError = null)
+                is PublicResult.Failure -> mutableState.update { it.copy(loadError = fetched.error) }
+                is PublicResult.Success -> {
+                    revision = fetched.value.revision
+                    val plan = AutomationPlans.decode(fetched.value.automation)
+                    mutableState.update { it.copy(plan = plan, saved = plan, loadError = null) }
                 }
-                is AutomationResult.Failure -> mutableState.update { it.copy(loadError = fetched.error) }
             }
         }
     }
 
-    private fun editDraft(transform: (AutomationDraft) -> AutomationDraft) = mutableState.update { current ->
-        val draft = current.draft ?: return@update current
-        current.copy(draft = normalized(transform(draft)))
+    fun consumeFinished() = mutableState.update { it.copy(finished = false) }
+
+    fun update(change: (AutomationPlan) -> AutomationPlan) =
+        mutableState.update { state -> state.copy(plan = state.plan?.let(change), problem = null) }
+
+    fun setStep(index: Int, step: PlanStep) = update { plan ->
+        plan.copy(steps = plan.steps.toMutableList().also { it[index] = step })
     }
 
-    private fun editNode(ref: List<NodeStep>, transform: (ActionDraft) -> ActionDraft) = editDraft { draft ->
-        draft.copy(action = draft.action.updated(ref, transform))
+    fun addStep(step: PlanStep) = update { plan -> plan.copy(steps = plan.steps + step) }
+
+    fun removeStep(index: Int) = update { plan -> plan.copy(steps = plan.steps.filterIndexed { i, _ -> i != index }) }
+
+    fun moveStep(index: Int, offset: Int) = update { plan ->
+        val target = index + offset
+        if (target !in plan.steps.indices) return@update plan
+        plan.copy(steps = plan.steps.toMutableList().also { steps -> steps.add(target, steps.removeAt(index)) })
     }
 
-    /** Fills schema defaults of every newly visible field without replacing user input. */
-    private fun normalized(draft: AutomationDraft): AutomationDraft {
-        val root = catalog.withDefaults(setOf(DescriptorSection.Root, DescriptorSection.Trigger), draft.values)
-        return draft.copy(values = root, action = normalizedNode(root, draft.action))
-    }
-
-    private fun normalizedNode(root: Map<String, JsonElement>, node: ActionDraft): ActionDraft = node.copy(
-        values = catalog.withDefaults(
-            setOf(DescriptorSection.Action, DescriptorSection.CallArguments),
-            root + node.values,
-        ).filterKeys { it.startsWith(ACTION_PREFIX) },
-        children = node.children.map { normalizedNode(root, it) },
-        thenAction = node.thenAction?.let { normalizedNode(root, it) },
-        elseAction = node.elseAction?.let { normalizedNode(root, it) },
-        repeatedAction = node.repeatedAction?.let { normalizedNode(root, it) },
-    )
-}
-
-private fun Map<String, JsonElement>.with(path: String, value: JsonElement?): Map<String, JsonElement> =
-    if (value == null) this - path else this + (path to value)
-
-private fun ActionDraft.updated(ref: List<NodeStep>, transform: (ActionDraft) -> ActionDraft): ActionDraft {
-    if (ref.isEmpty()) return transform(this)
-    val rest = ref.drop(1)
-    return when (val step = ref.first()) {
-        is NodeStep.Child -> copy(
-            children = children.mapIndexed { index, child ->
-                if (index == step.index) child.updated(rest, transform) else child
-            },
-        )
-        NodeStep.Then -> copy(thenAction = thenAction?.updated(rest, transform))
-        NodeStep.Else -> copy(elseAction = elseAction?.updated(rest, transform))
-        NodeStep.Repeated -> copy(repeatedAction = repeatedAction?.updated(rest, transform))
-    }
-}
-
-/** The persistent-state keys the draft reads or writes, shown read-only (S-UI-008). */
-fun referencedStateKeys(draft: AutomationDraft): List<String> {
-    val keys = sortedSetOf<String>()
-    fun visit(node: ActionDraft) {
-        when (node.type) {
-            "set_state" -> node.values.stringAt("/action/set_state/key")?.let(keys::add)
-            "conditional" -> if (node.values.stringAt("/action/conditional/condition/source") == "state") {
-                node.values.stringAt("/action/conditional/condition/key")?.let(keys::add)
+    fun save() {
+        val plan = state.value.plan ?: return
+        val problem = problemOf(plan)
+        if (problem != null) {
+            mutableState.update { it.copy(problem = problem) }
+            return
+        }
+        mutableState.update { it.copy(saving = true) }
+        viewModelScope.launch {
+            val definition = AutomationPlans.encode(plan, zone(), now().toLocalDate())
+            val input: JsonObject = revision?.let { expected ->
+                buildJsonObject {
+                    put("automation_id", automationId)
+                    put("expected_revision", expected)
+                    definition.forEach { (key, value) -> put(key, value) }
+                }
+            } ?: definition
+            when (val saved = repository.save(input)) {
+                is PublicResult.Success -> mutableState.update {
+                    it.copy(saving = false, saved = plan, finished = true)
+                }
+                is PublicResult.Failure -> mutableState.update {
+                    it.copy(saving = false, problem = PlanProblem.SaveFailed(saved.error))
+                }
             }
         }
-        node.children.forEach(::visit)
-        listOfNotNull(node.thenAction, node.elseAction, node.repeatedAction).forEach(::visit)
     }
-    visit(draft.action)
-    return keys.filter(String::isNotEmpty)
+
+    private fun problemOf(plan: AutomationPlan): PlanProblem? {
+        if (plan.name.isBlank()) return PlanProblem.NameRequired
+        when (val trigger = plan.trigger) {
+            is PlanTrigger.Weekly -> if (trigger.days.isEmpty()) return PlanProblem.WeeklyDays
+            is PlanTrigger.Every -> if (trigger.minutes < 1) return PlanProblem.Interval
+            is PlanTrigger.Once -> if (!trigger.at.isAfter(now())) return PlanProblem.OncePast
+            else -> {}
+        }
+        if (plan.steps.isEmpty()) return PlanProblem.StepsRequired
+        plan.steps.forEachIndexed { index, step ->
+            if (!complete(step)) return PlanProblem.StepIncomplete(index + 1)
+        }
+        return null
+    }
+
+    private fun complete(step: PlanStep): Boolean = when (step) {
+        is PlanStep.OpenApp -> step.packageName.isNotBlank()
+        is PlanStep.TapElement -> step.value.isNotBlank() && step.waitSeconds in 0..PlanStep.MAX_WAIT_SECONDS
+        is PlanStep.TypeText -> step.target?.isNotBlank() != false && step.waitSeconds in 0..PlanStep.MAX_WAIT_SECONDS
+        is PlanStep.PressKey -> true
+        is PlanStep.Wait -> step.seconds in 1..MAX_WAIT_STEP_SECONDS
+        is PlanStep.RunCommand -> step.command.isNotBlank()
+        is PlanStep.CopyText -> true
+    }
+
+    private companion object {
+        /** The Contract's delay bound of one day. */
+        const val MAX_WAIT_STEP_SECONDS = 86_400
+    }
 }
-
-private fun Map<String, JsonElement>.stringAt(path: String): String? =
-    (get(path) as? JsonPrimitive)?.takeIf { it.isString }?.content
-
-internal fun JsonElement?.asObjectOrEmpty(): JsonObject = this as? JsonObject ?: JsonObject(emptyMap())

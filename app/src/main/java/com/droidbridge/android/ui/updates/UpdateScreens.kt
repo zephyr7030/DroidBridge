@@ -1,11 +1,13 @@
 package com.droidbridge.android.ui.updates
 
+import com.droidbridge.android.product.release.ModulePresence
 import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,11 +40,11 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.droidbridge.android.R
+import com.droidbridge.android.ui.common.RowIcon
 import com.droidbridge.android.client.DroidBridgeClient
 import com.droidbridge.android.product.update.MaintenanceRecordView
 import com.droidbridge.android.product.update.MaintenanceReply
-import com.droidbridge.android.product.update.ModulePresence
-import com.droidbridge.android.product.update.ReleaseClassification
+import com.droidbridge.android.product.release.ReleaseClassification
 import com.droidbridge.android.product.update.UpdateCheck
 import com.droidbridge.android.product.update.UpdateMaintenanceReplies
 import com.droidbridge.android.product.update.UpdateMaintenanceView
@@ -193,6 +195,7 @@ fun UpdatesRoute(viewModel: UpdatesViewModel, apkVersion: String, back: () -> Un
             item {
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.updates_current_version)) },
+                    leadingContent = { RowIcon(R.drawable.ic_info) },
                     supportingContent = { Text(apkVersion) },
                     modifier = Modifier.testTag("updates:current_version"),
                 )
@@ -200,6 +203,7 @@ fun UpdatesRoute(viewModel: UpdatesViewModel, apkVersion: String, back: () -> Un
             item {
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.updates_component_status)) },
+                    leadingContent = { RowIcon(R.drawable.ic_extension) },
                     supportingContent = { Text(stringResource(maintenance?.module?.let(::moduleLabel) ?: R.string.state_unknown)) },
                     modifier = Modifier.testTag("updates:component_status"),
                 )
@@ -253,14 +257,14 @@ private fun LazyListScope.checkRegion(
     retry: () -> Unit,
 ) {
     when (val check = updates.check) {
-        UpdateCheck.Unconfigured -> item { Status(R.string.updates_configuration_unavailable, null, "configuration_unavailable") }
+        UpdateCheck.Unconfigured -> item { Status(R.string.updates_configuration_unavailable, null, "configuration_unavailable", R.drawable.ic_status_unknown) }
         UpdateCheck.Idle -> Unit
         UpdateCheck.Checking -> item { RouteLoading("updates") }
         UpdateCheck.Failed -> item { RouteError("updates", retry) }
         is UpdateCheck.Checked -> when (val classification = check.classification) {
-            ReleaseClassification.UpToDate -> item { Status(R.string.updates_up_to_date, null, "up_to_date") }
+            ReleaseClassification.UpToDate -> item { Status(R.string.updates_up_to_date, null, "up_to_date", R.drawable.ic_status_success) }
             is ReleaseClassification.ProductUpdate -> {
-                item { Status(R.string.updates_available, classification.manifest.version, "available") }
+                item { Status(R.string.updates_available, classification.manifest.version, "available", R.drawable.ic_system_update) }
                 val apk = updates.downloads?.apk
                 item {
                     if (apk == null) {
@@ -271,7 +275,7 @@ private fun LazyListScope.checkRegion(
                 }
             }
             is ReleaseClassification.ModuleRepair -> {
-                item { Status(R.string.updates_module_repair_required, classification.manifest.version, "module_repair_required") }
+                item { Status(R.string.updates_module_repair_required, classification.manifest.version, "module_repair_required", R.drawable.ic_status_error) }
                 val module = updates.downloads?.module
                 item {
                     if (module == null) {
@@ -295,12 +299,12 @@ private fun LazyListScope.maintenanceActions(
     cancel: (MaintenanceRecordView) -> Unit,
     continueApkOnly: () -> Unit,
 ) {
-    item { Status(if (record.productUpdate) R.string.updates_available else R.string.updates_module_repair_required, record.targetVersion, "maintenance") }
+    item { Status(if (record.productUpdate) R.string.updates_available else R.string.updates_module_repair_required, record.targetVersion, "maintenance", if (record.productUpdate) R.drawable.ic_system_update else R.drawable.ic_status_error) }
     when (record.phase) {
         "prepared" -> item { Action(R.string.updates_install_apk, "install_apk", !busy, installApk) }
         "apk_installing", "apk_installed" -> item { RouteLoading("updates:installing") }
         "module_installing" -> item {
-            if (record.nativeAttemptActive) RouteLoading("updates:installing") else Status(R.string.updates_reboot_required, null, "reboot_required")
+            if (record.nativeAttemptActive) RouteLoading("updates:installing") else Status(R.string.updates_reboot_required, null, "reboot_required", R.drawable.ic_restart)
         }
         "module_pending" -> {
             item {
@@ -344,9 +348,10 @@ private fun LazyListScope.maintenanceActions(
 }
 
 @Composable
-private fun Status(@StringRes text: Int, version: String?, tag: String) {
+private fun Status(@StringRes text: Int, version: String?, tag: String, @DrawableRes icon: Int) {
     ListItem(
         headlineContent = { Text(stringResource(text)) },
+        leadingContent = { RowIcon(icon) },
         supportingContent = version?.let { { Text(it) } },
         modifier = Modifier.testTag("updates:$tag"),
     )

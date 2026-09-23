@@ -1168,11 +1168,7 @@ async fn i8_cmd_g04_cleanup_uncertainty_is_explicit_for_sync_and_task_results() 
         encoded_bytes: 64,
     })));
     let task = core
-        .run_task(
-            &task_id,
-            "2026-09-13T00:00:01.000Z".to_owned(),
-            3,
-        )
+        .run_task(&task_id, "2026-09-13T00:00:01.000Z".to_owned(), 3)
         .await
         .unwrap();
     assert_eq!(task.state, contract::TaskState::Interrupted);

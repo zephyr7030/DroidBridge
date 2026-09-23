@@ -9,8 +9,13 @@ import com.droidbridge.android.execution.android.AndroidPrimitive
 import com.droidbridge.android.execution.android.NotificationActionFact
 import com.droidbridge.android.execution.android.NotificationOperationSurface
 import com.droidbridge.android.execution.android.NotificationPlatform
+import com.droidbridge.android.execution.android.NativeAndroidExecutionDispatcher
 import com.droidbridge.android.execution.android.ObservedNotification
 import com.droidbridge.android.execution.android.VisiblePackageFact
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -71,12 +76,18 @@ class I8_AndroidCoreTest {
         runtimeInstanceId = "33333333-3333-4333-8333-333333333333",
     )
 
-    private fun notification(handle: String, remote: Boolean = true) = ObservedNotification(
-        key = "0|chat|1",
+    private fun notification(
+        handle: String,
+        remote: Boolean = true,
+        key: String = "0|chat|1",
+        postedAtMillis: Long = 1_000,
+    ) = ObservedNotification(
+        key = key,
         packageName = "com.example.chat",
-        postedAtMillis = 1_000,
+        postedAtMillis = postedAtMillis,
         title = "Alice",
         text = "See you",
+        actionCount = 2,
         actions = listOf(
             NotificationActionFact("Reply", requiresRemoteInput = remote),
             NotificationActionFact("Mark read", requiresRemoteInput = false),
@@ -199,5 +210,73 @@ class I8_AndroidCoreTest {
                 )
             },
         )
+    }
+
+    @Test
+    fun notificationStateIsBoundedAndReconnectNeverReusesAGeneration() = runBlocking {
+        val platform = FakePlatform()
+        val surface = NotificationOperationSurface(platform) { _, _, _ -> true }
+        surface.connected(
+            (0..300).map { index ->
+                notification("handle-$index", key = "key-$index", postedAtMillis = index.toLong())
+            },
+        )
+        val snapshot = Json.parseToJsonElement(
+            surface.execute(request(AndroidPrimitive.NotificationSnapshot, "{}")).payload.decodeToString(),
+        ).jsonObject["notifications"]!!.jsonArray
+        assertEquals(256, snapshot.size)
+        assertEquals("key-300", snapshot.first().jsonObject["key"]!!.jsonPrimitive.content)
+        assertEquals("key-45", snapshot.last().jsonObject["key"]!!.jsonPrimitive.content)
+
+        val generation = snapshot.first().jsonObject["generation"]!!.jsonPrimitive.content.toLong()
+        surface.disconnected()
+        surface.connected(listOf(notification("replacement", key = "key-300", postedAtMillis = 301)))
+        assertEquals(
+            "STALE_REFERENCE",
+            code {
+                surface.execute(
+                    request(
+                        AndroidPrimitive.NotificationDismiss,
+                        """{"key":"key-300","generation":$generation}""",
+                    ),
+                )
+            },
+        )
+    }
+
+    @Test
+    fun taskActivityRelayRejectsStaleCountsAndReplaysTruthAfterServiceRecreation() {
+        val seen = mutableListOf<Long>()
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(seen::add)
+        NativeAndroidExecutionDispatcher.taskActivityChanged("epoch-a", 2, Long.MAX_VALUE - 2)
+        NativeAndroidExecutionDispatcher.taskActivityChanged("epoch-a", 2, Long.MAX_VALUE - 1)
+        NativeAndroidExecutionDispatcher.taskActivityChanged("epoch-a", 1, Long.MAX_VALUE - 3)
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(null)
+        NativeAndroidExecutionDispatcher.taskActivityChanged("epoch-a", 0, Long.MAX_VALUE)
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(seen::add)
+        NativeAndroidExecutionDispatcher.taskActivityChanged("epoch-b", 3, 1)
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(null)
+
+        assertEquals(listOf(2L, 0L, 3L), seen)
+    }
+
+    @Test
+    fun onlyADepartedDaemonsOwnTaskCountIsForgotten() {
+        val seen = mutableListOf<Long>()
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(seen::add)
+        seen.clear()
+        NativeAndroidExecutionDispatcher.daemonTaskActivityChanged("epoch-c", 2, 10)
+        NativeAndroidExecutionDispatcher.forgetDaemonTaskActivity()
+        NativeAndroidExecutionDispatcher.forgetDaemonTaskActivity()
+        // The daemon is back with the store revision sequence it left behind.
+        NativeAndroidExecutionDispatcher.daemonTaskActivityChanged("epoch-c", 2, 11)
+        // A Runtime hosted here takes the count over, and its hold outlives that daemon.
+        NativeAndroidExecutionDispatcher.taskActivityChanged("epoch-c", 1, 12)
+        NativeAndroidExecutionDispatcher.forgetDaemonTaskActivity()
+        NativeAndroidExecutionDispatcher.daemonTaskActivityChanged("epoch-c", 3, 13)
+        NativeAndroidExecutionDispatcher.forgetDaemonTaskActivity()
+        NativeAndroidExecutionDispatcher.installTaskActivitySink(null)
+
+        assertEquals(listOf(2L, 0L, 2L, 1L, 3L, 0L), seen)
     }
 }
