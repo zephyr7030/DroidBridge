@@ -1080,3 +1080,22 @@ fn i8_fs_g04_companion_port_propagates_typed_failure_and_rejects_invalid_payload
     );
     peer.join().unwrap();
 }
+
+#[test]
+fn daemon_version_code_is_the_product_version_code() {
+    // The module readiness check requires module.prop's versionCode, which the build stamps from
+    // gradle.properties, to equal the daemon's own; a daemon built with another value never
+    // becomes ready.
+    let properties = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gradle.properties"),
+    )
+    .unwrap();
+    let product = properties
+        .lines()
+        .find_map(|line| line.strip_prefix("droidbridgeVersionCode="))
+        .unwrap()
+        .trim()
+        .parse::<u64>()
+        .unwrap();
+    assert_eq!(daemon::VERSION_CODE, product);
+}

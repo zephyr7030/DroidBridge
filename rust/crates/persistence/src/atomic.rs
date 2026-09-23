@@ -1175,20 +1175,41 @@ impl StateStore {
         }
 
         let write_started = Instant::now();
+        // The name depends only on the revision this commit produces, and a commit that did not
+        // land leaves the revision where it was, so the next attempt reuses the name. A file left
+        // there by a writer that died mid-commit is removed under the state lock; one this commit
+        // cannot finish is removed here.
         let temporary = self
             .base
             .join(format!(".runtime-state.{}.tmp", state.store_revision));
+        match fs::remove_file(&temporary) {
+            Ok(()) => sync_directory(&self.base)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(error)),
+        }
         let mut file = open_new_private(&temporary)?;
-        file.write_all(&bytes).map_err(io_error)?;
-        preserve_replacement_metadata(&self.base.join("runtime-state.json"), &file)?;
-        file.sync_all().map_err(io_error)?;
+        let written = file
+            .write_all(&bytes)
+            .map_err(io_error)
+            .and_then(|()| {
+                preserve_replacement_metadata(&self.base.join("runtime-state.json"), &file)
+            })
+            .and_then(|()| file.sync_all().map_err(io_error));
+        drop(file);
+        if let Err(error) = written {
+            discard_temporary(&self.base, &temporary);
+            return Err(error);
+        }
         let temp_write_fsync_ns = write_started.elapsed().as_nanos();
         if crash(CrashPoint::AfterTempFsync) {
             return Err(injected_crash());
         }
 
         let rename_started = Instant::now();
-        replace_file(&temporary, &self.base.join("runtime-state.json"))?;
+        if let Err(error) = replace_file(&temporary, &self.base.join("runtime-state.json")) {
+            discard_temporary(&self.base, &temporary);
+            return Err(error);
+        }
         if crash(CrashPoint::AfterRename) {
             return Err(injected_crash());
         }
@@ -1204,24 +1225,6 @@ impl StateStore {
             rename_directory_fsync_ns,
             total_ns: total_started.elapsed().as_nanos(),
         })
-    }
-
-    pub fn recover_temps(&self, lease: &LifetimeLease) -> Result<usize, DomainError> {
-        let _lock = FileLock::acquire(&self.base.join("runtime-state.lock"))?;
-        self.validate_lease(lease)?;
-        let mut removed = 0;
-        for entry in fs::read_dir(&self.base).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let name = entry.file_name();
-            if name.to_string_lossy().starts_with(".runtime-state.")
-                && name.to_string_lossy().ends_with(".tmp")
-            {
-                fs::remove_file(entry.path()).map_err(io_error)?;
-                removed += 1;
-            }
-        }
-        sync_directory(&self.base)?;
-        Ok(removed)
     }
 
     pub fn cleanup_task_temporary(
@@ -1317,6 +1320,14 @@ fn write_new_json<T: Serialize>(path: &Path, value: &T) -> Result<(), DomainErro
     let mut file = open_new_private(path)?;
     file.write_all(&bytes).map_err(io_error)?;
     file.sync_all().map_err(io_error)
+}
+
+/// Removes the temporary file of a commit that failed. The commit's own error is what the caller
+/// reports; a temporary that cannot be removed now is removed by the next commit of that revision.
+fn discard_temporary(base: &Path, temporary: &Path) {
+    if fs::remove_file(temporary).is_ok() {
+        let _ = sync_directory(base);
+    }
 }
 
 fn remove_file_synced(base: &Path, name: &str) -> Result<(), DomainError> {

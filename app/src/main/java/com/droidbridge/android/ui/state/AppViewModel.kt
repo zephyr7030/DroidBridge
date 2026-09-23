@@ -107,7 +107,9 @@ class AppViewModel(
         }
     }
 
-    override fun onCleared() = client.close()
+    // The client belongs to the process graph and outlives this screen's ViewModel; a later
+    // Activity in the same process binds it again.
+    override fun onCleared() = client.unbind()
 }
 
 /** The module daemon retries its connection at most 30 s apart, so a longer silence means no module runs. */

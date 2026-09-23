@@ -54,7 +54,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) const VERSION_CODE: u64 = 3000;
+pub(crate) use crate::VERSION_CODE;
 
 pub(crate) struct MagiskHost {
     store: Arc<StateStore>,

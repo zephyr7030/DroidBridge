@@ -169,6 +169,26 @@ impl Daemon {
 
     fn serve_connection(&mut self, stream: &mut UnixStream) -> Result<(), DomainError> {
         self.require_canonical_directory()?;
+        // The App's uid is read from the package data directory the system created for it, not
+        // from the canonical base inside it: a base recreated by root after App data was cleared
+        // carries root as its owner, and would lock the App out for good.
+        let package_directory = self
+            .canonical_base
+            .ancestors()
+            .nth(2)
+            .ok_or_else(|| io_error("App canonical directory has no package directory"))?;
+        let expected_uid = fs::metadata(package_directory)
+            .map_err(|_| io_error("cannot inspect App package directory"))?
+            .uid();
+        // Any App can bind the abstract name while DroidBridge is not running, so the peer is
+        // authenticated before this daemon tells it anything.
+        let app_uid = peer_uid(stream).map_err(|_| io_error("cannot authenticate App socket"))?;
+        if app_uid != expected_uid {
+            return Err(DomainError::new(
+                ErrorCode::PermissionDenied,
+                "companion socket peer is not the App",
+            ));
+        }
         let owner = self.store.read_owner()?;
         let daemon_handshake = Handshake {
             protocol_version: PROTOCOL_VERSION,
@@ -182,19 +202,8 @@ impl Daemon {
         };
         send_json(stream, &daemon_handshake)?;
         let app_handshake: Handshake = receive_json(stream)?;
-        // The App's uid is read from the package data directory the system created for it, not
-        // from the canonical base inside it: a base recreated by root after App data was cleared
-        // carries root as its owner, and would lock the App out for good.
-        let package_directory = self
-            .canonical_base
-            .ancestors()
-            .nth(2)
-            .ok_or_else(|| io_error("App canonical directory has no package directory"))?;
-        let expected_uid = fs::metadata(package_directory)
-            .map_err(|_| io_error("cannot inspect App package directory"))?
-            .uid();
         app_handshake.validate_peer(
-            peer_uid(stream).map_err(|_| io_error("cannot authenticate App socket"))?,
+            app_uid,
             expected_uid,
             EndpointRole::ApkRuntime,
             &self.identity,

@@ -426,4 +426,26 @@
     <string name="stranded_confirm_body">Results of interrupted requests are lost; nothing else is affected.</string>
     <string name="tunnel_last_error">Last error: %1$s</string>
     <string name="stranded_failed">Could not clear: %1$s</string>
+    <string name="tunnel_step_connect">Step 1 · Connect the OpenAI tunnel</string>
+    <string name="tunnel_step_plugin">Step 2 · Create the plugin in ChatGPT</string>
+    <string name="tunnel_step_call">Step 3 · Call DroidBridge once from ChatGPT</string>
+    <string name="tunnel_plugin_done">I have finished the plugin setup</string>
+    <string name="tunnel_plugin_confirm_title">Is the plugin set up?</string>
+    <string name="tunnel_plugin_confirm_body">Confirm that in ChatGPT you turned on developer mode and created the DroidBridge plugin with the Tunnel connection type, choosing this tunnel.</string>
+    <string name="tunnel_plugin_confirm_yes">It is set up</string>
+    <string name="tunnel_plugin_confirm_no">Check again</string>
+    <string name="tunnel_finish_blocked">Finish the setup and make a call</string>
+    <string name="setup_exit_title">Setup is not finished</string>
+    <string name="setup_exit_body">DroidBridge cannot be used until setup is finished.</string>
+    <string name="setup_exit_continue">Continue setup</string>
+    <string name="setup_exit_leave">Leave anyway</string>
+    <string name="action_got_it">Got it</string>
+    <string name="about_mcp_protocol_version">MCP protocol version</string>
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_diagnostics_summary">Export troubleshooting information</string>
+    <string name="settings_data_summary">Update cache and Runtime data</string>
+    <string name="settings_updates_current">Version %1$s</string>
+    <string name="settings_updates_available">A newer version is available</string>
+    <string name="settings_about_summary">Versions, licenses and source code</string>
+    <string name="settings_welcome_summary">Go through first setup again</string>
 </resources>

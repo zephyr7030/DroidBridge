@@ -1,5 +1,7 @@
 package com.droidbridge.android.ui.home
 
+import com.droidbridge.android.product.home.AgentConnectionSummary
+import com.droidbridge.android.ui.common.GroupCard
 import com.droidbridge.android.product.runtime.PublicResult
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
@@ -92,6 +94,15 @@ data class HomeProjectionState(
     /** Running work first, then the most recent Tasks that ended. */
     val tasks: List<TaskSummary> = emptyList(),
 )
+
+/** Which agents are connected, once Home has read its projection; Home and Settings both show it. */
+internal fun HomeUiState.agentSummary(): AgentConnectionSummary? = projection?.let {
+    HomeProjection.agentConnections(
+        mcp = it.mcp,
+        tunnelRunning = tunnel?.state == TunnelRuntimeState.Running,
+        readFailed = mcpFailed || tunnelFailed,
+    )
+}
 
 data class HomeUiState(
     val projection: HomeProjectionState? = null,
@@ -278,11 +289,7 @@ private fun HomeContent(
     val snapshot = (clientState as? ClientState.Available)?.snapshot
     val slot = HomeProjection.updateSlot(snapshot?.compatibility.orEmpty(), newerVersionAvailable)
     val transparent = ListItemDefaults.colors(containerColor = Color.Transparent)
-    val agentState = HomeProjection.agentConnections(
-        mcp = projection.mcp,
-        tunnelRunning = state.tunnel?.state == TunnelRuntimeState.Running,
-        readFailed = state.mcpFailed || state.tunnelFailed,
-    )
+    val agentState = requireNotNull(state.agentSummary())
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -470,13 +477,6 @@ private fun SectionTitle(@StringRes title: Int) {
     )
 }
 
-@Composable
-private fun GroupCard(content: @Composable () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier.fillMaxWidth(),
-    ) { content() }
-}
 
 private enum class StatusTone { Ready, Pending, Failed }
 

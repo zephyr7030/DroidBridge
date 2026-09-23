@@ -13,6 +13,29 @@ mod visual;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// The product versionCode this daemon was built as, `major * 1_000_000 + minor * 1_000 + patch`
+/// of the crate version. The build requires that version to equal the one `gradle.properties`
+/// stamps into the APK and `module.prop`, so the three can only disagree across builds.
+pub const VERSION_CODE: u64 = parse_version_part(env!("CARGO_PKG_VERSION_MAJOR")) * 1_000_000
+    + parse_version_part(env!("CARGO_PKG_VERSION_MINOR")) * 1_000
+    + parse_version_part(env!("CARGO_PKG_VERSION_PATCH"));
+
+const fn parse_version_part(part: &str) -> u64 {
+    let bytes = part.as_bytes();
+    assert!(!bytes.is_empty(), "version part is empty");
+    let mut value = 0_u64;
+    let mut index = 0;
+    while index < bytes.len() {
+        assert!(
+            bytes[index].is_ascii_digit(),
+            "version part is not a number"
+        );
+        value = value * 10 + (bytes[index] - b'0') as u64;
+        index += 1;
+    }
+    value
+}
+
 /// The three independently probed helper families of S-MAGISK-005.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HelperFamily {

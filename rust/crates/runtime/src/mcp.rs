@@ -621,7 +621,7 @@ impl<H: McpHost> McpFacade<H> {
                 response_id,
                 &operation,
                 ErrorCode::ResourceLimit,
-                "the compressed image exceeds the MCP response limit",
+                "the call was served, but its result exceeds the MCP response limit; ask for less, for example no image or fewer nodes",
             );
         }
         response
@@ -721,12 +721,18 @@ impl<H: McpHost> McpFacade<H> {
         {
             return Err(invalid_host_reply());
         }
-        let mut bytes = Vec::new();
-        descriptor
-            .by_ref()
-            .take(size.saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|_| invalid_host_reply())?;
+        // Up to 8 MiB of file reads stay off the async workers that serve other exchanges.
+        let bytes = tokio::task::spawn_blocking(move || {
+            let mut bytes = Vec::new();
+            descriptor
+                .by_ref()
+                .take(size.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map(|_| bytes)
+        })
+        .await
+        .map_err(|_| invalid_host_reply())?
+        .map_err(|_| invalid_host_reply())?;
         if bytes.len() as u64 != size {
             return Err(invalid_host_reply());
         }

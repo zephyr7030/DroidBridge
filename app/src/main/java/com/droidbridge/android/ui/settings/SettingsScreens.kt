@@ -1,5 +1,16 @@
 package com.droidbridge.android.ui.settings
 
+import com.droidbridge.android.ui.mcp.agentConnectionLabel
+import com.droidbridge.android.ui.common.GroupCard
+import com.droidbridge.android.product.home.AgentConnectionSummary
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Arrangement
+import com.droidbridge.android.product.mcp.MCP_PROTOCOL_VERSION
 import android.app.LocaleConfig
 import android.app.LocaleManager
 import android.content.Intent
@@ -82,6 +93,7 @@ enum class SettingsDestination { Capabilities, AgentConnections, Diagnostics, Up
 fun SettingsRoute(
     theme: ThemePreference,
     setTheme: (ThemePreference) -> Unit,
+    status: SettingsStatus,
     open: (SettingsDestination) -> Unit,
 ) {
     var choosingTheme by rememberSaveable { mutableStateOf(false) }
@@ -89,27 +101,82 @@ fun SettingsRoute(
         modifier = Modifier.testTag("route:Settings"),
         topBar = { TopAppBar(title = { Text(stringResource(R.string.nav_settings)) }) },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
             group(R.string.settings_group_connection) {
-                Link(R.string.capabilities_title, R.drawable.ic_verified_user, "settings:capabilities") { open(SettingsDestination.Capabilities) }
-                Link(R.string.agent_connection_title, R.drawable.ic_smart_toy, "settings:agent") { open(SettingsDestination.AgentConnections) }
+                Link(
+                    R.string.capabilities_title,
+                    R.drawable.ic_verified_user,
+                    "settings:capabilities",
+                    when {
+                        status.pendingSetup > 0 ->
+                            pluralStringResource(R.plurals.capabilities_remaining, status.pendingSetup, status.pendingSetup)
+                        status.checking -> stringResource(R.string.capabilities_checking)
+                        else -> stringResource(R.string.home_all_ready)
+                    },
+                ) { open(SettingsDestination.Capabilities) }
+                RowDivider()
+                Link(
+                    R.string.agent_connection_title,
+                    R.drawable.ic_smart_toy,
+                    "settings:agent",
+                    status.agent?.let { agentConnectionLabel(it) } ?: stringResource(R.string.capabilities_checking),
+                ) { open(SettingsDestination.AgentConnections) }
             }
             group(R.string.settings_group_maintenance) {
-                Link(R.string.diagnostics_title, R.drawable.ic_bug_report, "settings:diagnostics") { open(SettingsDestination.Diagnostics) }
-                Link(R.string.settings_data, R.drawable.ic_storage, "settings:data") { open(SettingsDestination.Data) }
-                Link(R.string.settings_updates, R.drawable.ic_system_update, "settings:updates") { open(SettingsDestination.Updates) }
+                Link(
+                    R.string.diagnostics_title,
+                    R.drawable.ic_bug_report,
+                    "settings:diagnostics",
+                    stringResource(R.string.settings_diagnostics_summary),
+                ) { open(SettingsDestination.Diagnostics) }
+                RowDivider()
+                Link(
+                    R.string.settings_data,
+                    R.drawable.ic_storage,
+                    "settings:data",
+                    stringResource(R.string.settings_data_summary),
+                ) { open(SettingsDestination.Data) }
+            }
+            group(R.string.settings_group_appearance) {
+                LanguageItem()
+                RowDivider()
+                Link(
+                    R.string.settings_theme,
+                    R.drawable.ic_palette,
+                    "settings:theme",
+                    stringResource(themeLabel(theme)),
+                ) { choosingTheme = true }
             }
             group(R.string.settings_group_app) {
-                LanguageItem()
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.settings_theme)) },
-                    supportingContent = { Text(stringResource(themeLabel(theme))) },
-                    leadingContent = { RowIcon(R.drawable.ic_palette) },
-                    modifier = Modifier.clickable { choosingTheme = true }.testTag("settings:theme"),
-                )
-                Link(R.string.settings_about, R.drawable.ic_info, "settings:about") { open(SettingsDestination.About) }
                 // Always reachable fallback into first-launch setup, whatever state the app is in.
-                Link(R.string.settings_open_welcome, R.drawable.ic_replay, "settings:welcome") { open(SettingsDestination.Welcome) }
+                Link(
+                    R.string.settings_open_welcome,
+                    R.drawable.ic_replay,
+                    "settings:welcome",
+                    stringResource(R.string.settings_welcome_summary),
+                ) { open(SettingsDestination.Welcome) }
+                RowDivider()
+                Link(
+                    R.string.settings_about,
+                    R.drawable.ic_info,
+                    "settings:about",
+                    stringResource(R.string.settings_about_summary),
+                ) { open(SettingsDestination.About) }
+                RowDivider()
+                Link(
+                    R.string.settings_updates,
+                    R.drawable.ic_system_update,
+                    "settings:updates",
+                    if (status.newerVersionAvailable) {
+                        stringResource(R.string.settings_updates_available)
+                    } else {
+                        stringResource(R.string.settings_updates_current, status.versionName)
+                    },
+                ) { open(SettingsDestination.Updates) }
             }
         }
     }
@@ -141,19 +208,16 @@ private fun LanguageItem() {
     var current by remember { mutableStateOf(localeManager.applicationLocales.takeUnless { it.isEmpty }?.get(0)) }
     var choosing by rememberSaveable { mutableStateOf(false) }
     val systemLabel = stringResource(R.string.language_system)
-    ListItem(
-        headlineContent = { Text(stringResource(R.string.settings_language)) },
-        supportingContent = {
-            Text(
-                when {
-                    supported == null -> stringResource(R.string.state_error)
-                    else -> current?.let(::languageName) ?: systemLabel
-                },
-            )
+    Link(
+        R.string.settings_language,
+        R.drawable.ic_language,
+        "settings:language",
+        when {
+            supported == null -> stringResource(R.string.state_error)
+            else -> current?.let(::languageName) ?: systemLabel
         },
-        leadingContent = { RowIcon(R.drawable.ic_language) },
-        modifier = Modifier.clickable(enabled = supported != null) { choosing = true }.testTag("settings:language"),
-    )
+        enabled = supported != null,
+    ) { choosing = true }
     if (choosing && supported != null) {
         ChoiceDialog(
             title = R.string.settings_language,
@@ -216,6 +280,15 @@ private fun <T> ChoiceDialog(
     )
 }
 
+/** What the Settings rows report live: the same facts Home shows, read once by the Main entry. */
+data class SettingsStatus(
+    val pendingSetup: Int,
+    val checking: Boolean,
+    val agent: AgentConnectionSummary?,
+    val versionName: String,
+    val newerVersionAvailable: Boolean,
+)
+
 private fun LazyListScope.group(@StringRes title: Int, rows: @Composable () -> Unit) {
     item(key = title) {
         Column {
@@ -223,19 +296,38 @@ private fun LazyListScope.group(@StringRes title: Int, rows: @Composable () -> U
                 stringResource(title),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, top = 24.dp, end = 16.dp, bottom = 4.dp),
+                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
             )
-            rows()
+            GroupCard { Column { rows() } }
         }
     }
 }
 
+/** Every row has a title, one line of state and a chevron, so all rows are the same height. */
 @Composable
-private fun Link(@StringRes title: Int, @DrawableRes icon: Int, tag: String, action: () -> Unit) {
+private fun Link(
+    @StringRes title: Int,
+    @DrawableRes icon: Int,
+    tag: String,
+    summary: String,
+    enabled: Boolean = true,
+    action: () -> Unit,
+) {
     ListItem(
         headlineContent = { Text(stringResource(title)) },
+        supportingContent = { Text(summary, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         leadingContent = { RowIcon(icon) },
-        modifier = Modifier.clickable(onClick = action).testTag(tag),
+        trailingContent = { RowIcon(R.drawable.ic_chevron_right) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        modifier = Modifier.clickable(enabled = enabled, onClick = action).testTag(tag),
+    )
+}
+
+@Composable
+private fun RowDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 56.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
     )
 }
 
@@ -375,6 +467,14 @@ fun AboutRoute(
                     },
                     leadingContent = { RowIcon(R.drawable.ic_android) },
                     modifier = Modifier.testTag("about:platform"),
+                )
+            }
+            item {
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.about_mcp_protocol_version)) },
+                    supportingContent = { Text(MCP_PROTOCOL_VERSION) },
+                    leadingContent = { RowIcon(R.drawable.ic_tag) },
+                    modifier = Modifier.testTag("about:mcp_protocol"),
                 )
             }
             item {

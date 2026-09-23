@@ -1,5 +1,7 @@
 package com.droidbridge.android.ui
 
+import com.droidbridge.android.ui.home.agentSummary
+import com.droidbridge.android.ui.settings.SettingsStatus
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -9,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
@@ -305,6 +308,10 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
     } else {
         null
     }
+    // Leaving first setup before it is finished is only ever a confirmed choice; this is what the
+    // leave does once confirmed.
+    var leavingSetup by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val activity = LocalActivity.current
     // MaintenanceRecovery is the bootstrap root exactly while a maintenance blocker exists.
     LaunchedEffect(state.maintenance?.recoveryRequired) {
         if (state.maintenance?.recoveryRequired == true && backStack.lastOrNull() != MaintenanceRecovery) {
@@ -392,7 +399,17 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                             openDetail = { id -> backStack.add(AutomationDetail(id)) },
                             openEditor = { backStack.add(AutomationEditor()) },
                         )
-                        SETTINGS_TAB -> SettingsRoute(state.theme, viewModel::setTheme) { destination ->
+                        SETTINGS_TAB -> SettingsRoute(
+                            theme = state.theme,
+                            setTheme = viewModel::setTheme,
+                            status = SettingsStatus(
+                                pendingSetup = attention.size,
+                                checking = checking,
+                                agent = homeState.agentSummary(),
+                                versionName = graph.apkVersionName,
+                                newerVersionAvailable = updateState.newerVersionAvailable,
+                            ),
+                        ) { destination ->
                             backStack.add(
                                 when (destination) {
                                     SettingsDestination.Capabilities -> Capabilities
@@ -422,8 +439,12 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                     }
                     if (next != null) {
                         backStack.add(next)
+                    } else if (state.onboardingCompleted != true) {
+                        leavingSetup = {
+                            viewModel.completeOnboarding()
+                            navigate(Home)
+                        }
                     } else {
-                        viewModel.completeOnboarding()
                         navigate(Home)
                     }
                 }, { backStack.removeLastOrNull() }, navigate)
@@ -510,6 +531,32 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
             }
         },
     )
+    // Back from the guide's first page would close the App with setup unfinished.
+    BackHandler(
+        enabled = state.onboardingCompleted != true && backStack.size == 1 && backStack.first() == Welcome,
+    ) { leavingSetup = { activity?.finish() } }
+    leavingSetup?.let { leave ->
+        AlertDialog(
+            onDismissRequest = { leavingSetup = null },
+            title = { Text(stringResource(R.string.setup_exit_title)) },
+            text = { Text(stringResource(R.string.setup_exit_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { leavingSetup = null },
+                    modifier = Modifier.testTag("setup_exit:continue"),
+                ) { Text(stringResource(R.string.setup_exit_continue)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        leavingSetup = null
+                        leave()
+                    },
+                    modifier = Modifier.testTag("setup_exit:leave"),
+                ) { Text(stringResource(R.string.setup_exit_leave)) }
+            },
+        )
+    }
 }
 
 /**

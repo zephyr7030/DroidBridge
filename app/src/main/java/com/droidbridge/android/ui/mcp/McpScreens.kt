@@ -263,14 +263,6 @@ fun McpRoute(
                 }
                 item {
                     ListItem(
-                        headlineContent = { Text(stringResource(R.string.mcp_protocol_version)) },
-                        leadingContent = { RowIcon(R.drawable.ic_tag) },
-                        supportingContent = { Text(settings.protocolVersion) },
-                        modifier = Modifier.testTag("mcp:protocol_version"),
-                    )
-                }
-                item {
-                    ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_access_token)) },
                         leadingContent = { RowIcon(R.drawable.ic_key) },
                         supportingContent = { Text(state.revealedToken ?: MASKED_TOKEN, modifier = Modifier.testTag("mcp:token")) },

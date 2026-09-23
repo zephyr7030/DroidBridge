@@ -1,5 +1,9 @@
 package com.droidbridge.android.ui.common
 
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Card
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Box
@@ -107,4 +111,13 @@ object ReasonText {
 @Composable
 fun RowIcon(@DrawableRes icon: Int, modifier: Modifier = Modifier) {
     Icon(painterResource(icon), contentDescription = null, modifier = modifier)
+}
+
+/** One group of rows on a surface-container card, the grouping Home and Settings share. */
+@Composable
+fun GroupCard(content: @Composable () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier.fillMaxWidth(),
+    ) { content() }
 }

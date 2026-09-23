@@ -1,5 +1,6 @@
 package com.droidbridge.android.runtimehost
 
+import com.droidbridge.android.product.mcp.MCP_PROTOCOL_VERSION
 import android.system.Os
 import android.system.OsConstants
 import java.io.File
@@ -173,7 +174,7 @@ internal class McpSettingsController(
             put("listener", state)
             if (state == LISTENER_FAILED) put("reason", reason)
             put("endpoint", endpoint)
-            put("protocol_version", PROTOCOL_VERSION)
+            put("protocol_version", MCP_PROTOCOL_VERSION)
         }.toString()
     }
 
@@ -221,7 +222,6 @@ internal class McpSettingsController(
         const val FILE_NAME = "mcp.json"
         const val SCHEMA_VERSION = 1
         const val TOKEN_BYTES = 32
-        const val PROTOCOL_VERSION = "2026-07-28"
         const val MCP_LISTENER_FAILED = "MCP_LISTENER_FAILED"
         const val FGS_START_REJECTED = "FGS_START_REJECTED"
         const val IO_ERROR = """{"schema_version":1,"error":"IO_ERROR"}"""

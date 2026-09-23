@@ -181,6 +181,12 @@ fun TunnelRoute(
     var pendingConnect by remember { mutableStateOf<Pair<String, String>?>(null) }
     var enforceFirstSetupOrder by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var openedPluginSettings by rememberSaveable { mutableStateOf(false) }
+    var pluginConfirmed by rememberSaveable { mutableStateOf(false) }
+    var connectedOnce by rememberSaveable { mutableStateOf(false) }
+    var confirmPlugin by remember { mutableStateOf(false) }
+    // The desktop-browser note is shown once per visit, before any link is followed, and can be
+    // reopened from the top bar.
+    var showIntro by rememberSaveable { mutableStateOf(true) }
     val connect: (String, String) -> Unit = { id, key ->
         viewModel.configureAndEnable(id, key) { success ->
             if (success) {
@@ -203,7 +209,18 @@ fun TunnelRoute(
     val orderedSetup = enforceFirstSetupOrder != false
     val pluginSettingsEnabled = isTunnelStepActionEnabled(orderedSetup, creationReady)
     val createPluginEnabled = isTunnelStepActionEnabled(orderedSetup, creationReady && openedPluginSettings)
-    val doneEnabled = isTunnelStepActionEnabled(orderedSetup, settings?.lastCallEpochMs != null)
+    // A first configuration is shown one step at a time: the plugin once the tunnel is connected,
+    // the first call once the plugin is confirmed. Setup and a first configuration finish only on a
+    // call ChatGPT actually made.
+    val callSeen = settings?.lastCallEpochMs != null
+    // A connection that drops after it once succeeded keeps the later steps in view.
+    val pluginStepVisible = !orderedSetup || creationReady || connectedOnce
+    val callStepVisible = !orderedSetup || pluginConfirmed
+    val finishEnabled = when {
+        orderedSetup -> pluginConfirmed && callSeen
+        finishSetup != null -> callSeen
+        else -> true
+    }
 
     Scaffold(
         modifier = Modifier.testTag("route:TunnelSetup"),
@@ -215,17 +232,29 @@ fun TunnelRoute(
                         Icon(painterResource(R.drawable.ic_arrow_back), stringResource(R.string.tunnel_title))
                     }
                 },
+                actions = {
+                    IconButton(onClick = { showIntro = true }, modifier = Modifier.testTag("tunnel:intro")) {
+                        Icon(painterResource(R.drawable.ic_info), stringResource(R.string.tunnel_intro_title))
+                    }
+                },
             )
         },
         bottomBar = {
-            // First setup ends here whether or not ChatGPT is configured yet; it can be done later.
             Button(
                 onClick = finishSetup ?: done,
-                enabled = finishSetup != null || doneEnabled,
+                enabled = finishEnabled,
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp).heightIn(min = 56.dp)
                     .testTag("tunnel:done"),
             ) {
-                Text(stringResource(if (finishSetup != null) R.string.action_finish_setup else R.string.action_done))
+                Text(
+                    stringResource(
+                        when {
+                            !finishEnabled -> R.string.tunnel_finish_blocked
+                            finishSetup != null -> R.string.action_finish_setup
+                            else -> R.string.action_done
+                        },
+                    ),
+                )
             }
         },
     ) { padding ->
@@ -233,14 +262,7 @@ fun TunnelRoute(
             modifier = Modifier.fillMaxSize().padding(padding),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            item {
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.tunnel_intro_title)) },
-                    leadingContent = { RowIcon(R.drawable.ic_info) },
-                    supportingContent = { Text(stringResource(R.string.tunnel_intro_body)) },
-                    modifier = Modifier.testTag("tunnel:intro"),
-                )
-            }
+            if (orderedSetup) item { StepTitle(R.string.tunnel_step_connect, "tunnel:step:connect") }
             if (state.failed || settings == null) {
                 item {
                     ListItem(
@@ -425,81 +447,123 @@ fun TunnelRoute(
                         tunnelReason(settings.reason),
                     )
                 }
-                item {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            stringResource(R.string.tunnel_create_plugin_title),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(stringResource(R.string.tunnel_create_plugin_instructions))
-                        OutlinedButton(
-                            onClick = {
-                                openedPluginSettings = true
-                                context.openWebPage(CHATGPT_APPS_SETTINGS_URL)
-                            },
-                            enabled = pluginSettingsEnabled,
-                            modifier = Modifier.fillMaxWidth().testTag("tunnel:open_plugin_settings"),
-                        ) { Text(stringResource(R.string.tunnel_open_plugin_settings)) }
-                        Button(
-                            onClick = { context.openWebPage(CHATGPT_CREATE_PLUGIN_URL) },
-                            enabled = createPluginEnabled,
-                            modifier = Modifier.fillMaxWidth().testTag("tunnel:open_create_plugin"),
-                        ) { Text(stringResource(R.string.tunnel_open_create_plugin)) }
+                if (pluginStepVisible) {
+                    if (orderedSetup) item { StepTitle(R.string.tunnel_step_plugin, "tunnel:step:plugin") }
+                    item {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.tunnel_create_plugin_title),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(stringResource(R.string.tunnel_create_plugin_instructions))
+                            OutlinedButton(
+                                onClick = {
+                                    openedPluginSettings = true
+                                    context.openWebPage(CHATGPT_APPS_SETTINGS_URL)
+                                },
+                                enabled = pluginSettingsEnabled,
+                                modifier = Modifier.fillMaxWidth().testTag("tunnel:open_plugin_settings"),
+                            ) { Text(stringResource(R.string.tunnel_open_plugin_settings)) }
+                            Button(
+                                onClick = { context.openWebPage(CHATGPT_CREATE_PLUGIN_URL) },
+                                enabled = createPluginEnabled,
+                                modifier = Modifier.fillMaxWidth().testTag("tunnel:open_create_plugin"),
+                            ) { Text(stringResource(R.string.tunnel_open_create_plugin)) }
+                        }
+                    }
+                    if (settings.configured) {
+                        item {
+                            Text(
+                                stringResource(R.string.tunnel_plugin_information),
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
+                            )
+                        }
+                        item {
+                            CopyValueRow(
+                                title = R.string.tunnel_plugin_name,
+                                icon = R.drawable.ic_extension,
+                                value = TUNNEL_PLUGIN_NAME,
+                                tag = "tunnel:copy_plugin_name",
+                            ) { context.copyText(TUNNEL_PLUGIN_NAME) }
+                        }
+                        item {
+                            ListItem(
+                                headlineContent = { Text(stringResource(R.string.tunnel_id)) },
+                                leadingContent = { RowIcon(R.drawable.ic_badge) },
+                                supportingContent = { Text(settings.tunnelId.orEmpty()) },
+                                modifier = Modifier.testTag("tunnel:plugin_tunnel_id"),
+                            )
+                        }
+                    }
+                    if (orderedSetup && !pluginConfirmed) {
+                        item {
+                            Button(
+                                onClick = { confirmPlugin = true },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                                    .testTag("tunnel:plugin_done"),
+                            ) { Text(stringResource(R.string.tunnel_plugin_done)) }
+                        }
                     }
                 }
-                if (settings.configured) {
-                    item {
-                        Text(
-                            stringResource(R.string.tunnel_plugin_information),
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
-                        )
-                    }
-                    item {
-                        CopyValueRow(
-                            title = R.string.tunnel_plugin_name,
-                            icon = R.drawable.ic_extension,
-                            value = TUNNEL_PLUGIN_NAME,
-                            tag = "tunnel:copy_plugin_name",
-                        ) { context.copyText(TUNNEL_PLUGIN_NAME) }
-                    }
+                if (callStepVisible) {
+                    if (orderedSetup) item { StepTitle(R.string.tunnel_step_call, "tunnel:step:call") }
                     item {
                         ListItem(
-                            headlineContent = { Text(stringResource(R.string.tunnel_id)) },
-                            leadingContent = { RowIcon(R.drawable.ic_badge) },
-                            supportingContent = { Text(settings.tunnelId.orEmpty()) },
-                            modifier = Modifier.testTag("tunnel:plugin_tunnel_id"),
+                            headlineContent = { Text(stringResource(R.string.tunnel_first_call_title)) },
+                            leadingContent = { RowIcon(R.drawable.ic_chat) },
+                            supportingContent = {
+                                Text(
+                                    settings.lastCallEpochMs?.let(::formatLastCall)
+                                        ?: stringResource(R.string.tunnel_first_call_waiting),
+                                )
+                            },
+                            modifier = Modifier.testTag("tunnel:first_call"),
                         )
                     }
-                }
-                item {
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.tunnel_first_call_title)) },
-                        leadingContent = { RowIcon(R.drawable.ic_chat) },
-                        supportingContent = {
-                            Text(
-                                settings.lastCallEpochMs?.let(::formatLastCall)
-                                    ?: stringResource(R.string.tunnel_first_call_waiting),
-                            )
-                        },
-                        modifier = Modifier.testTag("tunnel:first_call"),
-                    )
-                }
-            }
-            settings?.let { current ->
-                item {
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.mcp_protocol_version)) },
-                        leadingContent = { RowIcon(R.drawable.ic_tag) },
-                        supportingContent = { Text(current.protocolVersion) },
-                        modifier = Modifier.testTag("tunnel:protocol_version"),
-                    )
                 }
             }
         }
+    }
+
+    if (showIntro) {
+        AlertDialog(
+            onDismissRequest = { showIntro = false },
+            icon = { Icon(painterResource(R.drawable.ic_info), contentDescription = null) },
+            title = { Text(stringResource(R.string.tunnel_intro_title)) },
+            text = { Text(stringResource(R.string.tunnel_intro_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { showIntro = false },
+                    modifier = Modifier.testTag("tunnel:intro:dismiss"),
+                ) { Text(stringResource(R.string.action_got_it)) }
+            },
+        )
+    }
+
+    if (confirmPlugin) {
+        AlertDialog(
+            onDismissRequest = { confirmPlugin = false },
+            title = { Text(stringResource(R.string.tunnel_plugin_confirm_title)) },
+            text = { Text(stringResource(R.string.tunnel_plugin_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmPlugin = false
+                        pluginConfirmed = true
+                    },
+                    modifier = Modifier.testTag("tunnel:plugin_done:confirm"),
+                ) { Text(stringResource(R.string.tunnel_plugin_confirm_yes)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmPlugin = false }) {
+                    Text(stringResource(R.string.tunnel_plugin_confirm_no))
+                }
+            },
+        )
     }
 
     if (confirmClear) {
@@ -523,6 +587,7 @@ fun TunnelRoute(
     }
 
     LaunchedEffect(Unit) { viewModel.refresh() }
+    LaunchedEffect(creationReady) { if (creationReady) connectedOnce = true }
     LaunchedEffect(settings) {
         if (enforceFirstSetupOrder == null && settings != null) {
             enforceFirstSetupOrder = !settings.configured
@@ -570,6 +635,16 @@ private fun tunnelSettingsError(error: TunnelSettingsError): Int = when (error) 
 
 private fun formatLastCall(epochMs: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.MEDIUM).format(Date(epochMs))
+
+@Composable
+private fun StepTitle(title: Int, tag: String) {
+    Text(
+        stringResource(title),
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp).testTag(tag),
+    )
+}
 
 @Composable
 private fun TunnelStatusRow(

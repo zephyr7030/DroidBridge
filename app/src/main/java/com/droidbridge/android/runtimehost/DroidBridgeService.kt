@@ -245,7 +245,6 @@ class DroidBridgeService : Service() {
             foregroundReasons.set(ForegroundReason.SpecialUse, active)
         }
         tunnelSettings.restore(::setTunnelForeground)
-        hostController.start()
         mediaProjection = MediaProjectionVisualController(
             service = this,
             registry = graph.androidExecutionRegistry,
@@ -269,16 +268,26 @@ class DroidBridgeService : Service() {
         shizukuController.start()
         tunnelSettings.enabledObserver = shizukuController::setKeepAliveWanted
         hostController.setGuardScopeSink(shizukuController::onGuardScopeReplaced)
+        startRuntime()
+    }
+
+    /**
+     * Starting the Runtime reads and recovers the store and probes the execution guard, which can
+     * take seconds on a slow boot. It runs off the main thread so a foreground start is entered in
+     * time; every Binder and host call starts the Runtime itself and waits on that same start.
+     */
+    private fun startRuntime() {
+        scope.launch { hostController.start() }
     }
 
     override fun onBind(intent: Intent?): IBinder {
-        hostController.start()
+        startRuntime()
         restoreMcpForUi(intent)
         return binder
     }
 
     override fun onRebind(intent: Intent?) {
-        hostController.start()
+        startRuntime()
         restoreMcpForUi(intent)
     }
 
@@ -399,7 +408,7 @@ class DroidBridgeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         latestStartId = startId
-        hostController.start()
+        startRuntime()
         when (intent?.action) {
             ACTION_KEEPALIVE_WAKE -> keepAliveWake()
             ACTION_TASK_ACTIVITY -> daemonTaskActivity(intent)

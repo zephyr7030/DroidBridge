@@ -6,6 +6,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 
+/** The MCP revision both agent connections speak; About shows it. */
+const val MCP_PROTOCOL_VERSION = "2026-07-28"
+
 enum class McpListenerState { Stopped, Running, Failed }
 
 /** One validated S-MCP-003 settings reply; the token is never part of it. */

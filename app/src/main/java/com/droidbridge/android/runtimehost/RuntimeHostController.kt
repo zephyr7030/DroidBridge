@@ -1674,6 +1674,11 @@ internal class RuntimeHostController(
             instance,
         )
         if (!runtimeSession.compareAndSet(targetPendingSession, targetSession)) return
+        // A promoted host starts as bare as an established one: it holds none of this companion's
+        // facts, framework primitives or guard scope until they are published at its generation.
+        registerPlatformFacts()
+        publishFrameworkPrimitives(targetOwner.hostGeneration)
+        adoptCompanionGuardScope(targetOwner.runtimeEpoch, targetOwner.hostGeneration, instance)
         // The host's binding is per-process and never inherited: a daemon just made the host has
         // none, exactly as on establishment, so this path asserts the same fact.
         scheduleNetworkAttachment()

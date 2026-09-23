@@ -134,7 +134,7 @@ where
     };
     encode_public(match result {
         Ok(result) => PublicResponse::success(request_id, result),
-        Err(error) => public_failure(Some(request_id), error.code, &operation),
+        Err(error) => domain_failure(request_id, &error, &operation),
     })
 }
 
@@ -182,6 +182,29 @@ pub(crate) fn decode_public(
                 &operation,
             ))
         })
+}
+
+/// A request the Runtime refused carries the Runtime's own reason, so a caller can tell apart two
+/// failures that share a code, and says whether the same request can simply be sent again.
+fn domain_failure(
+    request_id: RequestId,
+    error: &DomainError,
+    operation: &str,
+) -> PublicResponse<Value> {
+    PublicResponse::error(
+        Some(request_id),
+        PublicError {
+            code: error.code,
+            operation: operation.to_owned(),
+            retryable: error.code == ErrorCode::HostTransitionPending,
+            message: None,
+            capability: None,
+            details: Some(std::collections::BTreeMap::from([(
+                "reason".to_owned(),
+                contract::ErrorDetailValue::String(error.reason.to_owned()),
+            )])),
+        },
+    )
 }
 
 pub(crate) fn public_failure(

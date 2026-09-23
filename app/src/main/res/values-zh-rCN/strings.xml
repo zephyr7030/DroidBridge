@@ -423,4 +423,26 @@
     <string name="stranded_confirm_body">被中断请求的结果会丢失，其他数据不受影响</string>
     <string name="tunnel_last_error">最近一次错误：%1$s</string>
     <string name="stranded_failed">清除失败：%1$s</string>
+    <string name="tunnel_step_connect">第 1 步 · 连接 OpenAI 隧道</string>
+    <string name="tunnel_step_plugin">第 2 步 · 在 ChatGPT 里新建插件</string>
+    <string name="tunnel_step_call">第 3 步 · 在 ChatGPT 里调用一次</string>
+    <string name="tunnel_plugin_done">我已完成插件配置</string>
+    <string name="tunnel_plugin_confirm_title">插件配置好了吗？</string>
+    <string name="tunnel_plugin_confirm_body">请确认已按步骤配置好插件：在 ChatGPT 中打开了开发者模式，并用“隧道”连接方式、选择这个 Tunnel 新建了 DroidBridge 插件。</string>
+    <string name="tunnel_plugin_confirm_yes">已配置好</string>
+    <string name="tunnel_plugin_confirm_no">再检查一下</string>
+    <string name="tunnel_finish_blocked">请完成配置并调用</string>
+    <string name="setup_exit_title">设置还没有完成</string>
+    <string name="setup_exit_body">还没有完成设置，DroidBridge 现在还无法使用。</string>
+    <string name="setup_exit_continue">继续设置</string>
+    <string name="setup_exit_leave">仍要退出</string>
+    <string name="action_got_it">知道了</string>
+    <string name="about_mcp_protocol_version">MCP 协议版本</string>
+    <string name="settings_group_appearance">外观</string>
+    <string name="settings_diagnostics_summary">导出排查信息</string>
+    <string name="settings_data_summary">更新缓存与运行数据</string>
+    <string name="settings_updates_current">当前版本 %1$s</string>
+    <string name="settings_updates_available">有新版本可用</string>
+    <string name="settings_about_summary">版本、开源许可与代码仓库</string>
+    <string name="settings_welcome_summary">重新进行首次设置</string>
 </resources>

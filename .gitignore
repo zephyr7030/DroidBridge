@@ -28,7 +28,7 @@ Thumbs.db
 *.swp
 
 # Release packages and local release staging
-release/
+/release/
 
 # Editor, agent-local and native build state
 .vscode/

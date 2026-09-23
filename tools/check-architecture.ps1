@@ -60,7 +60,7 @@ $allowedEdges = @{
     persistence=@('contract', 'domain', 'runtime')
     app_native=@('contract', 'domain', 'runtime', 'persistence')
     daemon=@('contract', 'domain', 'runtime', 'persistence')
-    supervisor=@()
+    supervisor=@('contract', 'domain', 'persistence')
 }
 $cratesRoot = Join-Path $root 'rust/crates'
 if (Test-Path -LiteralPath $cratesRoot -PathType Container) {
@@ -72,7 +72,7 @@ if (Test-Path -LiteralPath $cratesRoot -PathType Container) {
         $text = Get-Content -LiteralPath $toml -Raw -Encoding UTF8
         foreach ($other in $allowedCrates) {
             if ($other -eq $crate) { continue }
-            if ($text -match "(?m)^$([regex]::Escape($other))\.workspace\s*=\s*true" -and $allowedEdges[$crate] -notcontains $other) {
+            if ($text -match "(?m)^\s*$([regex]::Escape($other))\s*(?:\.workspace\s*=\s*true|=\s*\{[^}\r\n]*\bpath\s*=)" -and $allowedEdges[$crate] -notcontains $other) {
                 Fail "illegal Rust edge: $crate -> $other"
             }
         }

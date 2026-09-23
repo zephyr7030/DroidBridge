@@ -108,6 +108,9 @@ fn i4_g01_crash_injection_keeps_atomic_truth_and_one_writer() {
         } else {
             assert_eq!(recovered.store_revision, 0);
             assert!(recovered.request_records.is_empty());
+            // The dead writer's temporary for revision 1 must not block the next commit of it.
+            store.compare_and_commit(&lease, 0, |_| Ok(())).unwrap();
+            assert_eq!(store.load(&lease).unwrap().store_revision, 1);
         }
     }
 

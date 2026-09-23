@@ -18,7 +18,6 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +36,7 @@ class DroidBridgeClient(
     private val refresh = RefreshCoordinator()
     private val pendingRequests = ConcurrentHashMap<String, CancellableContinuation<ByteArray>>()
     private val mutableState = MutableStateFlow<ClientState>(ClientState.Disconnected)
+    @Volatile
     private var runtime: IDroidBridgeRuntime? = null
     private var bound = false
     private var connection: ServiceConnection? = null
@@ -191,11 +191,6 @@ class DroidBridgeClient(
     private suspend fun mcpCall(call: (IDroidBridgeRuntime) -> String): String {
         val service = runtime ?: error("Runtime unavailable")
         return withContext(Dispatchers.IO) { call(service) }
-    }
-
-    fun close() {
-        unbind()
-        scope.cancel()
     }
 
     private fun connection(token: Long) = object : ServiceConnection {

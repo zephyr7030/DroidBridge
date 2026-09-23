@@ -9,7 +9,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::{
     Request, Response, StatusCode, body::Incoming, header, server::conn::http1, service::service_fn,
 };
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use jni::{
     EnvUnowned, Outcome,
     objects::{JClass, JString},
@@ -24,23 +24,30 @@ use std::{
     convert::Infallible,
     net::{Ipv4Addr, SocketAddr, TcpListener as StdTcpListener},
     ptr,
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 use tokio::sync::{Semaphore, oneshot};
 
 /// Bounds the Kotlin host calls in flight, each on its own short-lived thread.
 const MAX_HOST_CALLS: usize = 16;
+/// Bounds the open connections. Any local App may connect before it proves the token, so without
+/// this bound idle connections could exhaust the process's descriptors.
+const MAX_CONNECTIONS: usize = 32;
+/// A connection that has not sent a complete request head within this time is closed, including
+/// one that sits idle between requests.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// A request body that has not fully arrived within this time is refused.
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// The pause after a failed accept, which is transient (descriptor or memory pressure, or a peer
+/// that went away) and must not end the listener.
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 static LISTENER: Mutex<Option<McpListener>> = Mutex::new(None);
 
 pub(crate) struct McpListener {
     runtime: tokio::runtime::Runtime,
     token: Arc<RwLock<String>>,
-    failed: Arc<AtomicBool>,
 }
 
 impl McpListener {
@@ -74,18 +81,8 @@ impl McpListener {
             tokio::net::TcpListener::from_std(listener).map_err(|_| listener_failed())?
         };
         let token = Arc::new(RwLock::new(token));
-        let failed = Arc::new(AtomicBool::new(false));
-        runtime.spawn(accept_loop(
-            listener,
-            Arc::new(facade),
-            Arc::clone(&token),
-            Arc::clone(&failed),
-        ));
-        Ok(Self {
-            runtime,
-            token,
-            failed,
-        })
+        runtime.spawn(accept_loop(listener, Arc::new(facade), Arc::clone(&token)));
+        Ok(Self { runtime, token })
     }
 
     fn set_token(&self, token: String) -> Result<(), DomainError> {
@@ -96,11 +93,7 @@ impl McpListener {
     }
 
     fn state(&self) -> &'static str {
-        if self.failed.load(Ordering::SeqCst) {
-            "failed"
-        } else {
-            "running"
-        }
+        "running"
     }
 
     /// Closes the listening socket and every open exchange; admitted Runtime work is unaffected.
@@ -113,28 +106,32 @@ async fn accept_loop<H: McpHost + 'static>(
     listener: tokio::net::TcpListener,
     facade: Arc<McpFacade<H>>,
     token: Arc<RwLock<String>>,
-    failed: Arc<AtomicBool>,
 ) {
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
+        // A full set of connections leaves new ones waiting in the kernel backlog.
+        let Ok(permit) = Arc::clone(&connections).acquire_owned().await else {
+            return;
+        };
         match listener.accept().await {
             Ok((stream, _)) => {
                 let facade = Arc::clone(&facade);
                 let token = Arc::clone(&token);
                 tokio::spawn(async move {
+                    let _permit = permit;
                     let service = service_fn(move |request| {
                         respond(request, Arc::clone(&facade), Arc::clone(&token))
                     });
                     // A client disconnect aborts only its own exchange (S-MCP-001); an admitted
                     // Task stays Runtime-owned, so nothing is left to settle here.
                     let _ = http1::Builder::new()
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(HEADER_READ_TIMEOUT)
                         .serve_connection(TokioIo::new(stream), service)
                         .await;
                 });
             }
-            Err(_) => {
-                failed.store(true, Ordering::SeqCst);
-                return;
-            }
+            Err(_) => tokio::time::sleep(ACCEPT_RETRY_DELAY).await,
         }
     }
 }
@@ -158,9 +155,12 @@ async fn respond<H: McpHost>(
             )
         })
         .collect();
-    let Ok(body) = bounded_body(request.into_body()).await else {
-        return Ok(empty(StatusCode::BAD_REQUEST));
-    };
+    let body =
+        match tokio::time::timeout(BODY_READ_TIMEOUT, bounded_body(request.into_body())).await {
+            Ok(Ok(body)) => body,
+            Ok(Err(_)) => return Ok(empty(StatusCode::BAD_REQUEST)),
+            Err(_) => return Ok(empty(StatusCode::REQUEST_TIMEOUT)),
+        };
     // A poisoned token slot admits nobody rather than a stale token.
     let accepted = token.read().map(|token| token.clone()).unwrap_or_default();
     let response = facade
@@ -503,7 +503,7 @@ pub extern "system" fn Java_com_droidbridge_android_runtimehost_NativeRuntime_na
     }
 }
 
-/// The observed listener: `stopped`, `running`, or `failed` once serving ended by itself.
+/// The observed listener: `stopped`, `running`, or `failed` when its slot cannot be read.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_droidbridge_android_runtimehost_NativeRuntime_nativeMcpState(
     mut env: EnvUnowned,
@@ -628,5 +628,23 @@ mod tests {
 
         served.stop();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+    }
+
+    #[test]
+    fn a_silent_connection_is_closed_by_the_header_timeout() {
+        let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let facade = McpFacade::new(CannedHost, port, "0.1.0".to_owned()).unwrap();
+        let served = McpListener::serve(listener, TOKEN.to_owned(), facade).unwrap();
+
+        let mut silent = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        silent
+            .set_read_timeout(Some(HEADER_READ_TIMEOUT + Duration::from_secs(5)))
+            .unwrap();
+        let mut rest = Vec::new();
+        // The server ends the exchange; a client-side read timeout would fail this read instead.
+        silent.read_to_end(&mut rest).unwrap();
+
+        served.stop();
     }
 }

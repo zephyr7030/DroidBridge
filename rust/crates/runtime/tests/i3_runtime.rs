@@ -1081,6 +1081,33 @@ async fn i3_g06_shared_ingress_preserves_protocol_operations_and_task_controls()
     .unwrap();
     assert_eq!(response["error"]["operation"], "context.status");
     assert_eq!(response["error"]["code"], "UNSUPPORTED");
+    // The Runtime's own reason travels with the code; only a pending host transition is retryable.
+    assert_eq!(
+        response["error"]["details"]["reason"],
+        "adapter unavailable"
+    );
+    assert_eq!(response["error"]["retryable"], false);
+
+    let command = serde_json::json!({"protocol_version": 1, "request_id": request_id,
+        "payload": {"tool": "command", "action": "run", "input": {"command": "id", "run_as": "app"}}});
+    let response: serde_json::Value = serde_json::from_slice(
+        &runtime::submit_public(
+            &core,
+            &serde_json::to_vec(&command).unwrap(),
+            "2026-09-06T00:00:02.000Z".to_owned(),
+            2000,
+            false,
+            |_| async { panic!("a closed admission reached the installed-action adapter") },
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(response["error"]["code"], "HOST_TRANSITION_PENDING");
+    assert_eq!(response["error"]["retryable"], true);
+    assert_eq!(
+        response["error"]["details"]["reason"],
+        "Runtime host transition is pending"
+    );
 }
 
 #[tokio::test]

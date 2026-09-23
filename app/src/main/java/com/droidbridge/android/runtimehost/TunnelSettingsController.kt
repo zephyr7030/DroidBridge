@@ -1,5 +1,6 @@
 package com.droidbridge.android.runtimehost
 
+import com.droidbridge.android.product.mcp.MCP_PROTOCOL_VERSION
 import android.net.ConnectivityManager
 import android.net.Network
 import android.security.keystore.KeyGenParameterSpec
@@ -333,7 +334,7 @@ internal class TunnelSettingsController(
             // Only a tunnel that is enabled but not running has a failure worth naming.
             runtime.lastError()?.takeIf { state == TUNNEL_CONNECTING || state == TUNNEL_FAILED }
                 ?.takeIf { LAST_ERROR.matches(it) }?.let { put("last_error", it) }
-            put("protocol_version", PROTOCOL_VERSION)
+            put("protocol_version", MCP_PROTOCOL_VERSION)
         }.toString()
     }
 
@@ -385,7 +386,6 @@ internal class TunnelSettingsController(
     private companion object {
         const val FILE_NAME = "tunnel.json"
         const val SCHEMA_VERSION = 1
-        const val PROTOCOL_VERSION = "2026-07-28"
         const val FGS_START_REJECTED = "FGS_START_REJECTED"
         const val NETWORK_MONITOR_FAILED = "NETWORK_MONITOR_FAILED"
         const val CREDENTIALS_UNAVAILABLE = "CREDENTIALS_UNAVAILABLE"
