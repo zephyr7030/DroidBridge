@@ -479,14 +479,6 @@ fun AboutRoute(
             }
             item {
                 ListItem(
-                    headlineContent = { Text("${stringResource(R.string.mcp_protocol_version)}  $PROTOCOL_VERSION") },
-                    supportingContent = { Text("${stringResource(R.string.diag_store_schema)}  $STORE_SCHEMA_VERSION") },
-                    leadingContent = { RowIcon(R.drawable.ic_tag) },
-                    modifier = Modifier.testTag("about:versions"),
-                )
-            }
-            item {
-                ListItem(
                     headlineContent = { Text(stringResource(R.string.about_licenses)) },
                     leadingContent = { RowIcon(R.drawable.ic_description) },
                     modifier = Modifier.clickable(onClick = openLicenses).testTag("about:licenses"),
@@ -567,5 +559,3 @@ internal fun BackButton(tag: String, @StringRes description: Int, back: () -> Un
     }
 }
 
-private const val PROTOCOL_VERSION = "1"
-private const val STORE_SCHEMA_VERSION = "1"

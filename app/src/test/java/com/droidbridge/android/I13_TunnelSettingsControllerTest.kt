@@ -34,6 +34,24 @@ class I13_TunnelSettingsControllerTest {
     ) = TunnelSettingsController(directory, runtime, network, cipher, FakeFileSystem())
 
     @Test
+    fun the_first_call_survives_a_restarted_runtime_and_new_credentials_forget_it() {
+        val controller = controller()
+        controller.configure(TUNNEL_ID, API_KEY, foreground::add)
+        assertFalse(controller.settings().contains("last_call_epoch_ms"))
+
+        runtime.lastCall = FIRST_CALL
+        assertEquals(FIRST_CALL, long(controller.settings(), "last_call_epoch_ms"))
+
+        // A new process starts a tunnel that has seen no call yet.
+        val restarted = FakeRuntime()
+        assertEquals(FIRST_CALL, long(controller(runtime = restarted).settings(), "last_call_epoch_ms"))
+
+        val replaced = controller(runtime = restarted)
+        replaced.configure(TUNNEL_ID, API_KEY, foreground::add)
+        assertFalse(replaced.settings().contains("last_call_epoch_ms"))
+    }
+
+    @Test
     fun credentials_commit_before_enable_and_plaintext_never_reaches_disk() {
         val controller = controller()
         assertFalse(boolean(controller.settings(), "configured"))
@@ -121,6 +139,9 @@ class I13_TunnelSettingsControllerTest {
         assertTrue(cipher.deleted)
     }
 
+    private fun long(reply: String, name: String): Long =
+        Json.parseToJsonElement(reply).jsonObject.getValue(name).jsonPrimitive.content.toLong()
+
     private fun boolean(reply: String, name: String): Boolean =
         Json.parseToJsonElement(reply).jsonObject.getValue(name).jsonPrimitive.content.toBooleanStrict()
 
@@ -153,7 +174,9 @@ class I13_TunnelSettingsControllerTest {
 
         override fun state(): String = current
 
-        override fun lastCallEpochMs(): Long = 0
+        var lastCall = 0L
+
+        override fun lastCallEpochMs(): Long = lastCall
     }
 
     private class FakeNetwork : TunnelNetworkMonitor {
@@ -199,5 +222,6 @@ class I13_TunnelSettingsControllerTest {
     private companion object {
         const val TUNNEL_ID = "tunnel_0123456789abcdefghijklmnopqrstuv"
         const val API_KEY = "test-runtime-api-key"
+        const val FIRST_CALL = 1_789_495_200_000L
     }
 }

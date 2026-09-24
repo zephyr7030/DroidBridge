@@ -17,6 +17,9 @@ pub const LOG_BACKUP_FILES: usize = 2;
 pub const LOG_FILE_NAME: &str = "daemon-stderr.log";
 /// One read from the daemon's stderr: a stalled writer is drained at this size.
 const DRAIN_CHUNK_BYTES: usize = 8_192;
+/// Owner-only: the log directory and every log file are root's alone.
+const DIRECTORY_MODE: u32 = 0o700;
+const FILE_MODE: u32 = 0o600;
 
 /// Appends `bytes` to the log in `directory`, rotating first whenever the current file would pass
 /// [`LOG_FILE_LIMIT_BYTES`], so every file on disk stays within that limit and the bytes written
@@ -32,6 +35,20 @@ pub fn append(directory: &Path, bytes: &[u8]) -> io::Result<()> {
         Err(error) => return Err(error),
     }
     let path = directory.join(LOG_FILE_NAME);
+    // The log sits inside the App's private data and is written as root, whose umask may be 0, so
+    // the modes are set explicitly; this also narrows a directory or file an earlier version left
+    // world-writable.
+    restrict(directory, DIRECTORY_MODE)?;
+    for index in 0..=LOG_BACKUP_FILES {
+        let file = if index == 0 {
+            path.clone()
+        } else {
+            backup_path(&path, index)
+        };
+        if file.exists() {
+            restrict(&file, FILE_MODE)?;
+        }
+    }
     let mut written = file_len(&path)?;
     let mut file = open_append(&path)?;
     let mut remaining = bytes;
@@ -81,7 +98,26 @@ fn file_len(path: &Path) -> io::Result<u64> {
 }
 
 fn open_append(path: &Path) -> io::Result<File> {
-    OpenOptions::new().create(true).append(true).open(path)
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(FILE_MODE);
+    }
+    let file = options.open(path)?;
+    restrict(path, FILE_MODE)?;
+    Ok(file)
+}
+
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn restrict(path: &Path, mode: u32) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
 }
 
 /// Shifts the chain back by one, discarding the oldest file that the shift would overwrite.
@@ -177,6 +213,29 @@ mod tests {
                 .iter()
                 .any(|file| fs::read(file).unwrap() == first)
         );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stderr_log_is_owner_only_even_where_an_earlier_version_was_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = working_directory("stderr-modes");
+        let path = directory.join(LOG_FILE_NAME);
+        fs::create_dir_all(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::write(&path, b"old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+        fs::write(backup_path(&path, 1), b"older").unwrap();
+        fs::set_permissions(backup_path(&path, 1), fs::Permissions::from_mode(0o666)).unwrap();
+
+        append(&directory, b"new").unwrap();
+
+        let mode = |file: &Path| fs::metadata(file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&directory), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&backup_path(&path, 1)), 0o600);
 
         fs::remove_dir_all(directory).unwrap();
     }

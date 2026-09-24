@@ -4,14 +4,6 @@
 local.properties
 **/build/
 rust/target/
-app/src/main/jniLibs/
-app/build/generated/jniLibs/
-magisk/bin/*.so
-magisk/bin/droidbridge-supervisor
-magisk/bin/droidbridged
-out/
-dist/
-release-out/
 *.apk
 *.aab
 *.zip

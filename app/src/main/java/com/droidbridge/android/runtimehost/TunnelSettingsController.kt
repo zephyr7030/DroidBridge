@@ -191,6 +191,8 @@ internal class TunnelSettingsController(
         val enabled: Boolean,
         val tunnelId: String,
         val credential: EncryptedTunnelCredential,
+        /** When ChatGPT first called through this tunnel; first setup finishes on it after a restart too. */
+        val firstCallEpochMs: Long? = null,
     )
 
     fun settings(): String = synchronized(lock) {
@@ -314,7 +316,15 @@ internal class TunnelSettingsController(
         }
     }
 
-    private fun status(settings: Committed?): String {
+    private fun status(current: Committed?): String {
+        // The running tunnel knows only calls since it started; the first one is kept, so a
+        // restarted App still knows ChatGPT has called. A failed write keeps only the live value.
+        val observedCall = runtime.lastCallEpochMs().takeIf { it > 0 }
+        val settings = if (current != null && current.firstCallEpochMs == null && observedCall != null) {
+            commit(current.copy(firstCallEpochMs = observedCall)).getOrDefault(current)
+        } else {
+            current
+        }
         val nativeState = runtime.state().takeIf { it in STATES } ?: TUNNEL_FAILED
         val state = when {
             settings?.enabled != true -> TUNNEL_STOPPED
@@ -330,7 +340,7 @@ internal class TunnelSettingsController(
             put("state", state)
             if (settings != null) put("tunnel_id", settings.tunnelId)
             if (reason != null) put("reason", reason)
-            runtime.lastCallEpochMs().takeIf { it > 0 }?.let { put("last_call_epoch_ms", it) }
+            (observedCall ?: settings?.firstCallEpochMs)?.let { put("last_call_epoch_ms", it) }
             // Only a tunnel that is enabled but not running has a failure worth naming.
             runtime.lastError()?.takeIf { state == TUNNEL_CONNECTING || state == TUNNEL_FAILED }
                 ?.takeIf { LAST_ERROR.matches(it) }?.let { put("last_error", it) }
@@ -405,11 +415,17 @@ internal class TunnelSettingsController(
             put("tunnel_id", settings.tunnelId)
             put("ciphertext", settings.credential.ciphertext)
             put("iv", settings.credential.iv)
+            settings.firstCallEpochMs?.let { put("first_call_epoch_ms", it) }
         }.toString()
 
         fun decode(text: String): Committed {
             val value = Json.parseToJsonElement(text).jsonObject
-            require(value.keys == setOf("schema_version", "enabled", "tunnel_id", "ciphertext", "iv"))
+            val firstCall = value["first_call_epoch_ms"]?.jsonPrimitive?.also { require(!it.isString) }
+                ?.content?.toLong()?.also { require(it > 0) }
+            require(
+                value.keys == setOf("schema_version", "enabled", "tunnel_id", "ciphertext", "iv") +
+                    if (firstCall != null) setOf("first_call_epoch_ms") else emptySet(),
+            )
             val version = value.getValue("schema_version").jsonPrimitive
             require(!version.isString && version.content == SCHEMA_VERSION.toString())
             val enabled = value.getValue("enabled").jsonPrimitive
@@ -426,6 +442,7 @@ internal class TunnelSettingsController(
                 enabled = requireNotNull(enabled.booleanOrNull),
                 tunnelId = tunnelId,
                 credential = EncryptedTunnelCredential(ciphertext, iv),
+                firstCallEpochMs = firstCall,
             )
         }
 
