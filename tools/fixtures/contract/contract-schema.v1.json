@@ -655,7 +655,7 @@
           "type": "object",
           "properties": {
             "as_task": {
-              "description": "Runs the command as a Task: the call returns a task_id at once and task_control waits for,\nreads or cancels it. Use it for work that may outlast one tool call.",
+              "description": "Return a task_id immediately. Poll task_control.get for the terminal state, then inspect result.state and result.exit_code.",
               "type": "boolean",
               "default": false
             },
@@ -671,6 +671,7 @@
               ]
             },
             "max_output_bytes": {
+              "description": "Maximum bytes collected for command output. Inspect stdout_truncated and stderr_truncated, and use returned references when present.",
               "type": "integer",
               "format": "uint64",
               "default": 65536,
@@ -678,6 +679,7 @@
               "minimum": 1024
             },
             "run_as": {
+              "description": "Required execution identity. Choose app, shell or root according to the current capabilities; the result reports requested_run_as and actual_run_as.",
               "$ref": "#/$defs/RunAs"
             },
             "stdin": {
@@ -1073,6 +1075,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -1089,6 +1092,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -1096,11 +1100,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -1132,6 +1138,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -1148,6 +1155,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -1155,11 +1163,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -1189,16 +1199,19 @@
                   "minimum": 1
                 },
                 "from_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "from_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "observation_id": {
+                  "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
                 },
                 "operation": {
@@ -1206,11 +1219,13 @@
                   "const": "swipe"
                 },
                 "to_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "to_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
@@ -1230,6 +1245,7 @@
               "type": "object",
               "properties": {
                 "node_ref": {
+                  "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
@@ -1240,6 +1256,7 @@
                   "const": "text"
                 },
                 "text": {
+                  "description": "Text to enter.",
                   "type": "string"
                 }
               },
@@ -1253,6 +1270,7 @@
               "type": "object",
               "properties": {
                 "key_code": {
+                  "description": "Android key code; 4 is Back and 224 is Wake Up.",
                   "type": "integer",
                   "format": "int32"
                 },
@@ -2216,6 +2234,7 @@
               "$ref": "#/$defs/UuidV4"
             },
             "expected_revision": {
+              "description": "Current revision from automation.get or automation.list. Read again after a revision conflict.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -2329,6 +2348,7 @@
               "type": "boolean"
             },
             "expected_revision": {
+              "description": "Current revision from automation.get or automation.list. Read again after a revision conflict.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -2449,6 +2469,7 @@
               "type": "boolean"
             },
             "expected_revision": {
+              "description": "Current revision from automation.get or automation.list. Read again after a revision conflict.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -2474,7 +2495,7 @@
           "type": "object",
           "properties": {
             "as_task": {
-              "description": "Runs the command as a Task: the call returns a task_id at once and task_control waits for,\nreads or cancels it. Use it for work that may outlast one tool call.",
+              "description": "Return a task_id immediately. Poll task_control.get for the terminal state, then inspect result.state and result.exit_code.",
               "type": "boolean",
               "default": false
             },
@@ -2490,6 +2511,7 @@
               ]
             },
             "max_output_bytes": {
+              "description": "Maximum bytes collected for command output. Inspect stdout_truncated and stderr_truncated, and use returned references when present.",
               "type": "integer",
               "format": "uint64",
               "default": 65536,
@@ -2497,6 +2519,7 @@
               "minimum": 1024
             },
             "run_as": {
+              "description": "Required execution identity. Choose app, shell or root according to the current capabilities; the result reports requested_run_as and actual_run_as.",
               "$ref": "#/$defs/RunAs"
             },
             "stdin": {
@@ -2572,6 +2595,7 @@
           "type": "object",
           "properties": {
             "detail": {
+              "description": "compact returns device, runtime and capabilities. full also includes grants, components and compatibility. Use full when checking component versions.",
               "$ref": "#/$defs/ContextDetail",
               "default": "compact"
             }
@@ -2900,10 +2924,12 @@
           "type": "object",
           "properties": {
             "encoding": {
+              "description": "Encoding of returned data. Use base64 for binary files or byte-accurate paging; UTF-8 characters may span pages.",
               "$ref": "#/$defs/DataEncoding",
               "default": "utf8"
             },
             "max_bytes": {
+              "description": "Maximum source bytes returned in this page. Continue reading while truncated is true.",
               "type": "integer",
               "format": "uint64",
               "default": 65536,
@@ -2911,6 +2937,7 @@
               "minimum": 1
             },
             "offset": {
+              "description": "Byte offset in the source. Advance by returned_bytes, not by decoded text length.",
               "type": "integer",
               "format": "uint64",
               "default": 0,
@@ -4232,6 +4259,7 @@
           "type": "object",
           "properties": {
             "task_id": {
+              "description": "Task identifier returned by the initiating operation. Use that same identifier for get and cancel.",
               "$ref": "#/$defs/UuidV4"
             }
           },
@@ -4406,6 +4434,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -4422,6 +4451,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -4429,11 +4459,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -4465,6 +4497,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -4481,6 +4514,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -4488,11 +4522,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -4522,16 +4558,19 @@
                   "minimum": 1
                 },
                 "from_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "from_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "observation_id": {
+                  "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
                 },
                 "operation": {
@@ -4539,11 +4578,13 @@
                   "const": "swipe"
                 },
                 "to_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "to_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
@@ -4563,6 +4604,7 @@
               "type": "object",
               "properties": {
                 "node_ref": {
+                  "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
@@ -4573,6 +4615,7 @@
                   "const": "text"
                 },
                 "text": {
+                  "description": "Text to enter.",
                   "type": "string"
                 }
               },
@@ -4586,6 +4629,7 @@
               "type": "object",
               "properties": {
                 "key_code": {
+                  "description": "Android key code; 4 is Back and 224 is Wake Up.",
                   "type": "integer",
                   "format": "int32"
                 },
@@ -4611,14 +4655,17 @@
           "type": "object",
           "properties": {
             "include_image": {
+              "description": "Request a screenshot. In MCP, an available screenshot is returned as an image content block.",
               "type": "boolean",
               "default": true
             },
             "include_nodes": {
+              "description": "Request UI nodes for node_ref-based interactions. Set false for screenshot-only control.",
               "type": "boolean",
               "default": true
             },
             "max_nodes": {
+              "description": "Maximum number of returned UI nodes when include_nodes is true.",
               "type": "integer",
               "format": "uint32",
               "default": 500,
@@ -6116,7 +6163,7 @@
           "type": "object",
           "properties": {
             "as_task": {
-              "description": "Runs the command as a Task: the call returns a task_id at once and task_control waits for,\nreads or cancels it. Use it for work that may outlast one tool call.",
+              "description": "Return a task_id immediately. Poll task_control.get for the terminal state, then inspect result.state and result.exit_code.",
               "type": "boolean",
               "default": false
             },
@@ -6132,6 +6179,7 @@
               ]
             },
             "max_output_bytes": {
+              "description": "Maximum bytes collected for command output. Inspect stdout_truncated and stderr_truncated, and use returned references when present.",
               "type": "integer",
               "format": "uint64",
               "default": 65536,
@@ -6139,6 +6187,7 @@
               "minimum": 1024
             },
             "run_as": {
+              "description": "Required execution identity. Choose app, shell or root according to the current capabilities; the result reports requested_run_as and actual_run_as.",
               "$ref": "#/$defs/RunAs"
             },
             "stdin": {
@@ -6534,6 +6583,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -6550,6 +6600,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -6557,11 +6608,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -6593,6 +6646,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -6609,6 +6663,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -6616,11 +6671,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -6650,16 +6707,19 @@
                   "minimum": 1
                 },
                 "from_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "from_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "observation_id": {
+                  "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
                 },
                 "operation": {
@@ -6667,11 +6727,13 @@
                   "const": "swipe"
                 },
                 "to_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "to_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
@@ -6691,6 +6753,7 @@
               "type": "object",
               "properties": {
                 "node_ref": {
+                  "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
@@ -6701,6 +6764,7 @@
                   "const": "text"
                 },
                 "text": {
+                  "description": "Text to enter.",
                   "type": "string"
                 }
               },
@@ -6714,6 +6778,7 @@
               "type": "object",
               "properties": {
                 "key_code": {
+                  "description": "Android key code; 4 is Back and 224 is Wake Up.",
                   "type": "integer",
                   "format": "int32"
                 },
@@ -7536,7 +7601,7 @@
           "type": "object",
           "properties": {
             "as_task": {
-              "description": "Runs the command as a Task: the call returns a task_id at once and task_control waits for,\nreads or cancels it. Use it for work that may outlast one tool call.",
+              "description": "Return a task_id immediately. Poll task_control.get for the terminal state, then inspect result.state and result.exit_code.",
               "type": "boolean",
               "default": false
             },
@@ -7552,6 +7617,7 @@
               ]
             },
             "max_output_bytes": {
+              "description": "Maximum bytes collected for command output. Inspect stdout_truncated and stderr_truncated, and use returned references when present.",
               "type": "integer",
               "format": "uint64",
               "default": 65536,
@@ -7559,6 +7625,7 @@
               "minimum": 1024
             },
             "run_as": {
+              "description": "Required execution identity. Choose app, shell or root according to the current capabilities; the result reports requested_run_as and actual_run_as.",
               "$ref": "#/$defs/RunAs"
             },
             "stdin": {
@@ -7954,6 +8021,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -7970,6 +8038,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -7977,11 +8046,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -8013,6 +8084,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -8029,6 +8101,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -8036,11 +8109,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -8070,16 +8145,19 @@
                   "minimum": 1
                 },
                 "from_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "from_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "observation_id": {
+                  "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
                 },
                 "operation": {
@@ -8087,11 +8165,13 @@
                   "const": "swipe"
                 },
                 "to_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "to_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
@@ -8111,6 +8191,7 @@
               "type": "object",
               "properties": {
                 "node_ref": {
+                  "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
@@ -8121,6 +8202,7 @@
                   "const": "text"
                 },
                 "text": {
+                  "description": "Text to enter.",
                   "type": "string"
                 }
               },
@@ -8134,6 +8216,7 @@
               "type": "object",
               "properties": {
                 "key_code": {
+                  "description": "Android key code; 4 is Back and 224 is Wake Up.",
                   "type": "integer",
                   "format": "int32"
                 },
@@ -8811,7 +8894,7 @@
           "type": "object",
           "properties": {
             "as_task": {
-              "description": "Runs the command as a Task: the call returns a task_id at once and task_control waits for,\nreads or cancels it. Use it for work that may outlast one tool call.",
+              "description": "Return a task_id immediately. Poll task_control.get for the terminal state, then inspect result.state and result.exit_code.",
               "type": "boolean",
               "default": false
             },
@@ -8827,6 +8910,7 @@
               ]
             },
             "max_output_bytes": {
+              "description": "Maximum bytes collected for command output. Inspect stdout_truncated and stderr_truncated, and use returned references when present.",
               "type": "integer",
               "format": "uint64",
               "default": 65536,
@@ -8834,6 +8918,7 @@
               "minimum": 1024
             },
             "run_as": {
+              "description": "Required execution identity. Choose app, shell or root according to the current capabilities; the result reports requested_run_as and actual_run_as.",
               "$ref": "#/$defs/RunAs"
             },
             "stdin": {
@@ -9229,6 +9314,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -9245,6 +9331,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -9252,11 +9339,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -9288,6 +9377,7 @@
                   "type": "object",
                   "properties": {
                     "node_ref": {
+                      "description": "Node reference returned by an observation that requested UI nodes.",
                       "type": "string"
                     },
                     "target": {
@@ -9304,6 +9394,7 @@
                   "type": "object",
                   "properties": {
                     "observation_id": {
+                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
                       "$ref": "#/$defs/UuidV4"
                     },
                     "target": {
@@ -9311,11 +9402,13 @@
                       "const": "coordinate"
                     },
                     "x": {
+                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
                     },
                     "y": {
+                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
                       "type": "integer",
                       "format": "uint32",
                       "minimum": 0
@@ -9345,16 +9438,19 @@
                   "minimum": 1
                 },
                 "from_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "from_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "observation_id": {
+                  "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
                 },
                 "operation": {
@@ -9362,11 +9458,13 @@
                   "const": "swipe"
                 },
                 "to_x": {
+                  "description": "Horizontal coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
                 },
                 "to_y": {
+                  "description": "Vertical coordinate in native display pixels.",
                   "type": "integer",
                   "format": "uint32",
                   "minimum": 0
@@ -9386,6 +9484,7 @@
               "type": "object",
               "properties": {
                 "node_ref": {
+                  "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
@@ -9396,6 +9495,7 @@
                   "const": "text"
                 },
                 "text": {
+                  "description": "Text to enter.",
                   "type": "string"
                 }
               },
@@ -9409,6 +9509,7 @@
               "type": "object",
               "properties": {
                 "key_code": {
+                  "description": "Android key code; 4 is Back and 224 is Wake Up.",
                   "type": "integer",
                   "format": "int32"
                 },

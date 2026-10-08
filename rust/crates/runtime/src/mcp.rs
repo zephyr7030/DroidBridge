@@ -33,7 +33,7 @@ pub const MCP_TOOL_NAMES: [&str; 8] = [
 ];
 const REF_FIELDS: [&str; 4] = ["stdout_ref", "stderr_ref", "data_ref", "image_ref"];
 
-/// What each mother tool tells an AI client before it is called: display title, one-line purpose and
+/// What each mother tool tells an AI client before it is called: display title, usage points and
 /// the MCP behavior hints. A tool with any mutating action is not read-only; hints are advisory.
 struct ToolPresentation {
     title: &'static str,
@@ -49,7 +49,11 @@ const fn presentation(name: &str) -> ToolPresentation {
     {
         b"context" => (
             "Device context",
-            "Read DroidBridge status, capabilities and the tool catalog.",
+            concat!(
+                "- Check device, Runtime readiness and capabilities with status.\n",
+                "- Use detail=\"full\" for versions, grants and compatibility.\n",
+                "- Use catalog for capability details."
+            ),
             true,
             false,
             true,
@@ -57,7 +61,11 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"filesystem" => (
             "Files",
-            "Inspect, read, write, move, delete, archive and download files on the device.",
+            concat!(
+                "- Inspect, read, write, manage, archive and download files.\n",
+                "- Paged reads: encoding=\"base64\"; advance by returned_bytes until truncated=false.\n",
+                "- Async operations return task_id."
+            ),
             false,
             true,
             false,
@@ -65,7 +73,11 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"command" => (
             "Shell commands",
-            "Run commands on the device as the app, shell or root identity.",
+            concat!(
+                "- Run commands with an explicit, supported run_as.\n",
+                "- Use as_task=true for long-running commands.\n",
+                "- Success: state=\"completed\" and exit_code=0, including the nested command result."
+            ),
             false,
             true,
             false,
@@ -73,7 +85,11 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"network" => (
             "Network",
-            "Diagnose connectivity and capture or inject network traffic.",
+            concat!(
+                "- Inspect networks, diagnose connections, capture or inject packets.\n",
+                "- Capture: select an interface, filter and limits; retain capture_id and task_id.\n",
+                "- Stop the capture, confirm Task completion, then read the retained capture."
+            ),
             false,
             true,
             false,
@@ -81,7 +97,12 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"visual" => (
             "Screen",
-            "Observe the screen and tap, swipe, type text or press keys.",
+            concat!(
+                "- Observe, view images or interact. observe already includes any available image.\n",
+                "- Screenshot-only: include_image=true, include_nodes=false.\n",
+                "- Coordinates: current observation_id and native display pixels.\n",
+                "- Text: focus the editor first. Verify the UI after interactions."
+            ),
             false,
             true,
             false,
@@ -89,7 +110,10 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"android" => (
             "Android apps",
-            "Inspect packages, launch apps and intents, and use the clipboard and notifications.",
+            concat!(
+                "- Inspect packages, launch apps/intents, access clipboard and notifications.\n",
+                "- Use package_name when known; verify the resulting UI after launch."
+            ),
             false,
             true,
             false,
@@ -97,7 +121,11 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         b"automation" => (
             "Automations",
-            "List, create, update, enable, delete and run automations. Tap, long-press or type into screen elements with the visual `element` step, which finds its target by text when the automation runs.",
+            concat!(
+                "- List, inspect, save, enable, delete and run automations.\n",
+                "- Read current records; supply expected_revision where required.\n",
+                "- element resolves targets by text at run time. run returns task_id."
+            ),
             false,
             true,
             false,
@@ -105,7 +133,11 @@ const fn presentation(name: &str) -> ToolPresentation {
         ),
         _ => (
             "Tasks",
-            "List, inspect and cancel background tasks.",
+            concat!(
+                "- List, inspect or cancel Tasks by task_id.\n",
+                "- Poll get until completed, failed, cancelled or interrupted; inspect result/error.\n",
+                "- cancel_requested=true alone does not confirm cancellation; check the terminal state."
+            ),
             false,
             true,
             false,
@@ -121,6 +153,132 @@ const fn presentation(name: &str) -> ToolPresentation {
         open_world,
     }
 }
+fn tool_examples(name: &str) -> Result<Value, DomainError> {
+    Ok(match name {
+        "context" => json!([
+            {
+                "action": "status",
+                "input": {}
+            },
+            {
+                "action": "status",
+                "input": {
+                    "detail": "full"
+                }
+            }
+        ]),
+        "filesystem" => json!([
+            {
+                "action": "read",
+                "input": {
+                    "target": {
+                        "type": "path",
+                        "value": "/sdcard/Download/example.txt"
+                    },
+                    "encoding": "base64",
+                    "offset": 0,
+                    "max_bytes": 1024
+                }
+            }
+        ]),
+        "command" => json!([
+            {
+                "action": "run",
+                "input": {
+                    "command": "id",
+                    "run_as": "shell"
+                }
+            },
+            {
+                "action": "run",
+                "input": {
+                    "command": "id",
+                    "run_as": "shell",
+                    "as_task": true
+                }
+            }
+        ]),
+        "network" => json!([
+            {
+                "action": "inspect",
+                "input": {
+                    "scope": "interfaces",
+                    "max_entries": 20
+                }
+            }
+        ]),
+        "visual" => json!([
+            {
+                "action": "observe",
+                "input": {
+                    "include_image": true,
+                    "include_nodes": false
+                }
+            },
+            {
+                "action": "interact",
+                "input": {
+                    "operation": "tap",
+                    "target": "coordinate",
+                    "observation_id": "11111111-1111-4111-8111-111111111111",
+                    "x": 320,
+                    "y": 900
+                }
+            },
+            {
+                "action": "interact",
+                "input": {
+                    "operation": "text",
+                    "text": "Test message"
+                }
+            },
+            {
+                "action": "interact",
+                "input": {
+                    "operation": "key",
+                    "key_code": 4
+                }
+            }
+        ]),
+        "android" => json!([
+            {
+                "action": "package",
+                "input": {
+                    "operation": "list",
+                    "include_system": false,
+                    "limit": 10
+                }
+            }
+        ]),
+        "automation" => json!([
+            {
+                "action": "list",
+                "input": {
+                    "limit": 10
+                }
+            }
+        ]),
+        "task_control" => json!([
+            {
+                "action": "get",
+                "input": {
+                    "task_id": "11111111-1111-4111-8111-111111111111"
+                }
+            },
+            {
+                "action": "list",
+                "input": {
+                    "states": [
+                        "running"
+                    ],
+                    "limit": 20
+                }
+            }
+        ]),
+        _ => return Err(generated_contract_invalid()),
+    })
+}
+
 const REF_EXPIRY_BATCH: usize = 32;
 const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
@@ -1104,6 +1262,55 @@ fn next_step(code: &str) -> Option<&'static str> {
     })
 }
 
+fn collect_schema_definitions(
+    value: &Value,
+    names: &mut BTreeSet<String>,
+) -> Result<(), DomainError> {
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if key == "$ref" {
+                    let name = value
+                        .as_str()
+                        .and_then(|reference| reference.strip_prefix("#/$defs/"))
+                        .filter(|name| !name.is_empty() && !name.contains('/'))
+                        .ok_or_else(generated_contract_invalid)?;
+                    names.insert(name.replace("~1", "/").replace("~0", "~"));
+                } else {
+                    collect_schema_definitions(value, names)?;
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_schema_definitions(value, names)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn reachable_schema_definitions(
+    schema: &Map<String, Value>,
+    definitions: &Map<String, Value>,
+) -> Result<Map<String, Value>, DomainError> {
+    let mut pending = BTreeSet::new();
+    collect_schema_definitions(&Value::Object(schema.clone()), &mut pending)?;
+    let mut reachable = Map::new();
+    while let Some(name) = pending.pop_first() {
+        if reachable.contains_key(&name) {
+            continue;
+        }
+        let definition = definitions
+            .get(&name)
+            .ok_or_else(generated_contract_invalid)?;
+        collect_schema_definitions(definition, &mut pending)?;
+        reachable.insert(name, definition.clone());
+    }
+    Ok(reachable)
+}
+
 fn tool_definitions() -> Result<Value, DomainError> {
     let bundle: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1162,7 +1369,9 @@ fn tool_definitions() -> Result<Value, DomainError> {
             }
         }
         input.insert("$schema".to_owned(), dialect.clone());
-        input.insert("$defs".to_owned(), Value::Object(request_defs.clone()));
+        let definitions = reachable_schema_definitions(&input, request_defs)?;
+        input.insert("$defs".to_owned(), Value::Object(definitions));
+        input.insert("examples".to_owned(), tool_examples(name)?);
 
         let mut output_defs = Map::new();
         let mut branches = Vec::new();
@@ -1383,4 +1592,51 @@ fn generated_contract_invalid() -> DomainError {
 
 fn invalid_host_reply() -> DomainError {
     DomainError::new(ErrorCode::IoError, "artifact query reply is invalid")
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_transitive_and_recursive_definitions_without_unused_ones() {
+        let schema = json!({"$ref": "#/$defs/Tree"});
+        let definitions = json!({
+            "Tree": {"type": "object", "properties": {
+                "leaf": {"$ref": "#/$defs/Leaf"},
+                "version": {"$ref": "#/$defs/Version"}
+            }},
+            "Leaf": {"type": "object", "properties": {"parent": {"$ref": "#/$defs/Tree"}}},
+            "Version": {"type": "integer", "minimum": 1},
+            "Unused": {"$ref": "#/$defs/Missing"}
+        });
+        let actual = reachable_schema_definitions(
+            schema.as_object().unwrap(),
+            definitions.as_object().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            actual.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["Leaf", "Tree", "Version"]
+        );
+        for (name, value) in actual {
+            assert_eq!(value, definitions[&name]);
+        }
+    }
+
+    #[test]
+    fn refuses_missing_or_unsupported_references() {
+        for reference in [
+            json!("#/$defs/Missing"),
+            json!("https://example.com/schema"),
+            json!("#/$defs/"),
+            json!("#/$defs/Type/properties/value"),
+            json!(1),
+        ] {
+            let schema = json!({"$ref": reference});
+            let error =
+                reachable_schema_definitions(schema.as_object().unwrap(), &Map::new()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InternalError);
+        }
+    }
 }

@@ -394,6 +394,7 @@ pub struct AutomationCreateInput {
 #[serde(deny_unknown_fields)]
 pub struct AutomationUpdateInput {
     pub automation_id: AutomationId,
+    /// Current revision from automation.get or automation.list. Read again after a revision conflict.
     pub expected_revision: u64,
     pub name: String,
     pub enabled: bool,
@@ -405,6 +406,7 @@ pub struct AutomationUpdateInput {
 pub struct AutomationSetEnabledInput {
     pub automation_id: AutomationId,
     pub enabled: bool,
+    /// Current revision from automation.get or automation.list. Read again after a revision conflict.
     pub expected_revision: u64,
 }
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -423,6 +425,7 @@ pub struct AutomationRunResult {
 #[serde(deny_unknown_fields)]
 pub struct AutomationDeleteInput {
     pub automation_id: AutomationId,
+    /// Current revision from automation.get or automation.list. Read again after a revision conflict.
     pub expected_revision: u64,
 }
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]

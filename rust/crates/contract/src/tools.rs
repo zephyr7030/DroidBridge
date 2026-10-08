@@ -160,6 +160,7 @@ pub enum ContextCall {
 #[derive(Clone, Debug, Default, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextStatusInput {
+    /// compact returns device, runtime and capabilities. full also includes grants, components and compatibility. Use full when checking component versions.
     #[serde(default)]
     pub detail: ContextDetail,
 }
@@ -363,11 +364,14 @@ pub enum ReadSource {
 pub struct FilesystemReadInput {
     #[serde(flatten)]
     pub source: ReadSource,
+    /// Byte offset in the source. Advance by returned_bytes, not by decoded text length.
     #[serde(default)]
     pub offset: u64,
+    /// Maximum source bytes returned in this page. Continue reading while truncated is true.
     #[serde(default = "d64k")]
     #[schemars(range(min = 1, max = 1048576))]
     pub max_bytes: u64,
+    /// Encoding of returned data. Use base64 for binary files or byte-accurate paging; UTF-8 characters may span pages.
     #[serde(default)]
     pub encoding: DataEncoding,
 }
@@ -578,6 +582,7 @@ pub struct CommandRunInput {
     /// times out or is cancelled, background (`&`, `nohup`) ones included: nothing it starts
     /// outlives it.
     pub command: String,
+    /// Required execution identity. Choose app, shell or root according to the current capabilities; the result reports requested_run_as and actual_run_as.
     pub run_as: RunAs,
     /// An absolute working directory, at most 4096 bytes of UTF-8.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -590,11 +595,11 @@ pub struct CommandRunInput {
     #[serde(default = "d30s")]
     #[schemars(range(min = 1000, max = 3600000))]
     pub timeout_ms: u64,
+    /// Maximum bytes collected for command output. Inspect stdout_truncated and stderr_truncated, and use returned references when present.
     #[serde(default = "d64k")]
     #[schemars(range(min = 1024, max = 1048576))]
     pub max_output_bytes: u64,
-    /// Runs the command as a Task: the call returns a task_id at once and task_control waits for,
-    /// reads or cancels it. Use it for work that may outlast one tool call.
+    /// Return a task_id immediately. Poll task_control.get for the terminal state, then inspect result.state and result.exit_code.
     #[serde(default)]
     pub as_task: bool,
 }
@@ -645,6 +650,7 @@ pub struct TaskListInput {
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskGetInput {
+    /// Task identifier returned by the initiating operation. Use that same identifier for get and cancel.
     pub task_id: TaskId,
 }
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
@@ -1065,10 +1071,13 @@ pub enum VisualCall {
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisualObserveInput {
+    /// Request a screenshot. In MCP, an available screenshot is returned as an image content block.
     #[serde(default = "yes")]
     pub include_image: bool,
+    /// Request UI nodes for node_ref-based interactions. Set false for screenshot-only control.
     #[serde(default = "yes")]
     pub include_nodes: bool,
+    /// Maximum number of returned UI nodes when include_nodes is true.
     #[serde(default = "d500")]
     #[schemars(range(min = 1, max = 5000))]
     pub max_nodes: u32,
@@ -1124,11 +1133,17 @@ impl<'de> Deserialize<'de> for VisualViewInput {
 #[serde(deny_unknown_fields, tag = "target")]
 pub enum PointTarget {
     #[serde(rename = "node")]
-    Node { node_ref: String },
+    Node {
+        /// Node reference returned by an observation that requested UI nodes.
+        node_ref: String,
+    },
     #[serde(rename = "coordinate")]
     Coordinate {
+        /// Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.
         observation_id: UuidV4,
+        /// Horizontal coordinate in native display pixels: 0 <= x < display.width.
         x: u32,
+        /// Vertical coordinate in native display pixels: 0 <= y < display.height.
         y: u32,
     },
 }
@@ -1148,10 +1163,15 @@ pub enum VisualInteractInput {
     },
     #[serde(rename = "swipe")]
     Swipe {
+        /// Identifier from the observation used to choose the swipe coordinates.
         observation_id: UuidV4,
+        /// Horizontal coordinate in native display pixels.
         from_x: u32,
+        /// Vertical coordinate in native display pixels.
         from_y: u32,
+        /// Horizontal coordinate in native display pixels.
         to_x: u32,
+        /// Vertical coordinate in native display pixels.
         to_y: u32,
         #[serde(default = "d300")]
         #[schemars(range(min = 1, max = 10000))]
@@ -1159,12 +1179,15 @@ pub enum VisualInteractInput {
     },
     #[serde(rename = "text")]
     Text {
+        /// Text to enter.
         text: String,
+        /// Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.
         #[serde(skip_serializing_if = "Option::is_none")]
         node_ref: Option<String>,
     },
     #[serde(rename = "key")]
     Key {
+        /// Android key code; 4 is Back and 224 is Wake Up.
         key_code: i32,
         #[serde(default)]
         meta_state: i32,

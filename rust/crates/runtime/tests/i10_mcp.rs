@@ -186,6 +186,29 @@ fn tool_call(name: &str, arguments: Value) -> McpRequest {
     )
 }
 
+fn assert_schema_refs_resolve(schema: &Value, value: &Value) {
+    match value {
+        Value::Object(fields) => {
+            if let Some(reference) = fields.get("$ref") {
+                let pointer = reference.as_str().unwrap().strip_prefix('#').unwrap();
+                assert!(
+                    schema.pointer(pointer).is_some(),
+                    "unresolved reference {pointer}"
+                );
+            }
+            for field in fields.values() {
+                assert_schema_refs_resolve(schema, field);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                assert_schema_refs_resolve(schema, value);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[tokio::test]
 async fn i10_g04_supported_method_set_is_exactly_the_five_2026_methods() {
     let (facade, _) = facade();
@@ -231,7 +254,31 @@ async fn i10_g04_supported_method_set_is_exactly_the_five_2026_methods() {
             .collect::<Vec<_>>(),
         runtime::MCP_TOOL_NAMES.to_vec()
     );
+    let artifact = contract::generated_artifacts()
+        .into_iter()
+        .find(|artifact| artifact.relative_path == "contract-schema.v1.json")
+        .unwrap();
+    let contract_schema: Value = serde_json::from_slice(&artifact.bytes).unwrap();
+    let definitions = &contract_schema["schemas"]["public_request"]["$defs"];
     for tool in tools {
+        for schema in [&tool["inputSchema"], &tool["outputSchema"]] {
+            assert_schema_refs_resolve(schema, schema);
+        }
+        for (name, definition) in tool["inputSchema"]["$defs"].as_object().unwrap() {
+            assert_eq!(
+                definition, &definitions[name],
+                "retained definition {name} changed"
+            );
+        }
+        assert!(tool["inputSchema"]["$defs"].get("PublicPayload").is_none());
+        let examples = tool["inputSchema"]["examples"].as_array().unwrap();
+        assert!(!examples.is_empty());
+        for example in examples {
+            let mut payload = example.as_object().unwrap().clone();
+            payload.insert("tool".to_owned(), tool["name"].clone());
+            serde_json::from_value::<contract::PublicPayload>(Value::Object(payload))
+                .expect("advertised example must deserialize as the actual tool");
+        }
         let mut keys = tool
             .as_object()
             .unwrap()
@@ -282,6 +329,14 @@ async fn i10_g04_supported_method_set_is_exactly_the_five_2026_methods() {
         );
     }
     assert!(listed["result"].get("nextCursor").is_none());
+    println!(
+        "MCP_SCHEMA_METRICS input_bytes={} tool_list_bytes={}",
+        tools
+            .iter()
+            .map(|tool| serde_json::to_vec(&tool["inputSchema"]).unwrap().len())
+            .sum::<usize>(),
+        serde_json::to_vec(&listed).unwrap().len()
+    );
 
     for (method, status, code) in [
         ("prompts/list", 404, -32601),
