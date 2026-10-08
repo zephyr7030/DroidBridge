@@ -15,6 +15,8 @@
   <img alt="arm64-v8a" src="https://img.shields.io/badge/ABI-arm64--v8a-lightgrey">
   <img alt="MCP 2026-07-28" src="https://img.shields.io/badge/MCP-2026--07--28-8A2BE2">
   <a href="https://github.com/zephyr7030/DroidBridge/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/zephyr7030/DroidBridge"></a>
+  <a href="https://github.com/zephyr7030/DroidBridge/releases"><img alt="下载量" src="https://img.shields.io/github/downloads/zephyr7030/DroidBridge/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F"></a>
+  <a href="https://t.me/anDroidBridge"><img alt="Telegram 群组" src="https://img.shields.io/badge/Telegram-%E4%BA%A4%E6%B5%81%E7%BE%A4-26A5E4?logo=telegram&logoColor=white"></a>
   <a href="https://ko-fi.com/zephyr7030"><img alt="在 Ko-fi 上支持" src="https://img.shields.io/badge/Ko--fi-%E6%94%AF%E6%8C%81-FF5E5B?logo=kofi&logoColor=white"></a>
 </p>
 
@@ -146,6 +148,11 @@
 ```
 
 `pwsh tools/check-toolchain.ps1` 可检查工具链。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 交流
+
+提问、反馈设备情况、获取版本更新：欢迎加入 [Telegram 群组](https://t.me/anDroidBridge)。
+问题报告请优先提交到 [GitHub Issues](https://github.com/zephyr7030/DroidBridge/issues)。
 
 ## 支持项目
 

@@ -15,6 +15,8 @@
   <img alt="arm64-v8a" src="https://img.shields.io/badge/ABI-arm64--v8a-lightgrey">
   <img alt="MCP 2026-07-28" src="https://img.shields.io/badge/MCP-2026--07--28-8A2BE2">
   <a href="https://github.com/zephyr7030/DroidBridge/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/zephyr7030/DroidBridge"></a>
+  <a href="https://github.com/zephyr7030/DroidBridge/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/zephyr7030/DroidBridge/total?label=downloads"></a>
+  <a href="https://t.me/anDroidBridge"><img alt="Telegram group" src="https://img.shields.io/badge/Telegram-group-26A5E4?logo=telegram&logoColor=white"></a>
   <a href="https://ko-fi.com/zephyr7030"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white"></a>
 </p>
 
@@ -166,6 +168,11 @@ The build is pinned and currently scripted for Windows with PowerShell 7:
 ```
 
 `pwsh tools/check-toolchain.ps1` verifies the toolchain. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Community
+
+Questions, device reports and release news: join the [Telegram group](https://t.me/anDroidBridge).
+Bugs are best filed as [GitHub issues](https://github.com/zephyr7030/DroidBridge/issues).
 
 ## Support the project
 
