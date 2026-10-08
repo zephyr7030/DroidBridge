@@ -5,42 +5,60 @@
 ### English
 
 **Changed**
-- Shizuku keep-alive in DroidBridge now also covers local MCP, not only the ChatGPT tunnel. It can be
-  turned off on the capabilities page (Keep alive → Turn off); it is on by default. While on,
-  Shizuku wakes DroidBridge after it is stopped, including when you stop it yourself.
-- Keep-alive grants the battery-optimization exemption and background permission only when they are
-  missing, and turning it off withdraws exactly what it granted.
-- The MCP tools describe their use more concisely and come with examples.
+- DroidBridge (no root): Shizuku keep-alive now also covers local MCP, not only the ChatGPT tunnel.
+  It is on by default and can be turned off on the capabilities page (Keep alive → Turn off). While
+  on, Shizuku wakes DroidBridge after it is stopped, including when you stop it yourself.
+- DroidBridge (no root): keep-alive grants the battery-optimization exemption and background
+  permission only when they are missing, and turning it off withdraws exactly what it granted.
+- MCP tools explain how to use them: how to page through a file read, which coordinates and
+  observation to tap with, when an automation change needs `expected_revision`, how to follow a
+  command started with `as_task`, and that `cancel_requested` alone does not mean a task stopped.
+  Each tool carries checked examples, and the tool list no longer repeats schema definitions a tool
+  does not use.
 
 **Fixed**
 - The ChatGPT connection no longer stays failed for good after the control plane refuses it, for
-  example on a network whose proxy blocks OpenAI. It now shows failed and tries again every few
-  minutes, and at once when the phone moves to another network.
+  example on a network whose proxy blocks OpenAI. It shows failed and tries again every few
+  minutes; DroidBridge (no root) also tries again at once when the phone moves to another network.
 - A reply to ChatGPT that the network dropped mid-way could hold the connection while it still
   showed running; such a reply is now given up after 30 seconds.
-- After the phone moves to another network, DroidBridge reconnects to ChatGPT at once instead of
-  waiting for the previous network's connection to time out.
-- Command deadlines written like `1m30s` or `1.5s` are understood.
-- In the root edition, a scheduled automation could fail with `wake alarm timer arm failed` after the
+- DroidBridge (no root): after the phone moves to another network, it reconnects to ChatGPT at once
+  instead of waiting for the previous network's connection to time out.
+- A ChatGPT call whose deadline was written like `1m30s` or `1.5s` ran without a deadline; such
+  deadlines are now honored.
+- Root edition: a scheduled automation could fail with `wake alarm timer arm failed` after the
   phone's clock was adjusted (for example by network time). The alarm was in fact set; it is now
   treated as set.
+
+**For developers**
+- `tools/mcp-testing.md` with `tools/mcp_test_support.py`, `tools/mcp_fixture_server.py` and
+  `tools/mcp_fixture_test.py`: a kit for testing DroidBridge over MCP on a device. It checks task
+  results to their end state, bounds network captures, saves screenshots from the observe reply
+  without a second read, and keeps tokens and image data out of its logs.
 
 ### 中文
 
 **变更**
-- 卓爱桥的 Shizuku 保活现在也覆盖本地 MCP，不再只跟随 ChatGPT 隧道。可在「执行环境与权限」页的「后台保活」中关闭，默认开启。
+- 卓爱桥（免 Root）：Shizuku 保活现在也覆盖本地 MCP，不再只跟随 ChatGPT 隧道。默认开启，可在「执行环境与权限」页的「后台保活」中关闭。
   开启时，DroidBridge 被停止后（包括手动停止）由 Shizuku 唤醒。
-- 保活只在缺少时才授予电池优化豁免和后台运行许可，关闭时只撤销它自己授予的部分。
-- MCP 工具的说明更简洁，并附带示例。
+- 卓爱桥（免 Root）：保活只在缺少时才授予电池优化豁免和后台运行许可，关闭时只撤销它自己授予的部分。
+- MCP 工具补充了用法说明：文件如何分页读取、点击时用哪次观察的坐标、修改自动化何时需要 `expected_revision`、
+  如何跟踪用 `as_task` 启动的命令，以及 `cancel_requested` 并不代表任务已经停止。每个工具都附带经过校验的示例，
+  工具列表也不再重复附上用不到的结构定义。
 
 **修复**
 - ChatGPT 连接被控制面拒绝后（例如所在网络的代理拦截了 OpenAI）不再一直停在失败状态：现在显示失败，并每隔几分钟重试一次；
-  手机切换到其他网络时立即重试。
+  卓爱桥（免 Root）在手机切换到其他网络时还会立即重试。
 - 回复 ChatGPT 时如果网络中途断开，连接可能一直卡住却仍显示「运行中」；现在这类回复 30 秒后放弃。
-- 手机切换网络后会立即重新连接 ChatGPT，不再等待旧网络上的连接超时。
-- 支持 `1m30s`、`1.5s` 这种写法的命令截止时间。
-- Root 版中，手机时间被调整后（例如网络自动校时），定时自动化可能报 `wake alarm timer arm failed` 而失败。
+- 卓爱桥（免 Root）：手机切换网络后会立即重新连接 ChatGPT，不再等待旧网络上的连接超时。
+- ChatGPT 调用的截止时间如果写成 `1m30s` 或 `1.5s` 这种格式，以前会被当作没有截止时间；现在会按截止时间处理。
+- Root 版：手机时间被调整后（例如网络自动校时），定时自动化可能报 `wake alarm timer arm failed` 而失败。
   实际上闹钟已经设好，现在按已设好处理。
+
+**面向开发者**
+- 新增 `tools/mcp-testing.md`，配套 `tools/mcp_test_support.py`、`tools/mcp_fixture_server.py` 和 `tools/mcp_fixture_test.py`，
+  用于在真机上通过 MCP 测试 DroidBridge。它会检查任务一直到最终状态、限制抓包大小、直接从 observe 的回复里保存截图而不再读第二次，
+  并且日志里不记录 token 和图片数据。
 
 ## 0.5.1
 
