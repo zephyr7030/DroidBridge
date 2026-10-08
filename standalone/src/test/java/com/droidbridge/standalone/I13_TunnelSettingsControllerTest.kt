@@ -118,6 +118,20 @@ class I13_TunnelSettingsControllerTest {
     }
 
     @Test
+    fun a_new_default_network_replaces_the_running_tunnel() {
+        val controller = controller()
+        controller.configure(TUNNEL_ID, API_KEY, foreground::add)
+        controller.setEnabled(true, foreground::add)
+        network.emit(true)
+        val stopsBefore = runtime.stops
+
+        network.emit(true)
+        assertEquals(2, runtime.starts)
+        assertEquals(stopsBefore + 1, runtime.stops)
+        assertEquals(TUNNEL_RUNNING, runtime.state())
+    }
+
+    @Test
     fun enabled_configuration_restores_after_process_recreation_and_clear_removes_it() {
         controller().run {
             configure(TUNNEL_ID, API_KEY, foreground::add)
@@ -152,6 +166,7 @@ class I13_TunnelSettingsControllerTest {
 
     private class FakeRuntime : TunnelRuntimePort {
         var starts = 0
+        var stops = 0
         var validation = "valid"
         var tunnelId: String? = null
         var apiKey: String? = null
@@ -168,6 +183,7 @@ class I13_TunnelSettingsControllerTest {
         }
 
         override fun stop(): Boolean {
+            stops += 1
             current = TUNNEL_STOPPED
             return true
         }

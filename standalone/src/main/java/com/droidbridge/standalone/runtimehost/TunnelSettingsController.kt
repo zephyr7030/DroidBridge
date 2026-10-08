@@ -299,10 +299,10 @@ internal class TunnelSettingsController(
         synchronized(lock) {
             if (expected != generation) return
             val current = committed?.takeIf { it.enabled } ?: return
-            if (!available) {
-                runtime.stop()
-                return
-            }
+            // A new default network gets a new tunnel: connections pooled on the previous network
+            // would otherwise wait out a poll timeout before the tunnel moved over.
+            runtime.stop()
+            if (!available) return
             val apiKey = runCatching { cipher.decrypt(current.tunnelId, current.credential) }
                 .getOrElse {
                     failure = CREDENTIALS_UNAVAILABLE

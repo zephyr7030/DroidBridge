@@ -9,6 +9,7 @@ import com.droidbridge.ui.client.CapabilityAction
 import com.droidbridge.ui.client.CapabilityRow
 import com.droidbridge.ui.client.CapabilityRowKey
 import com.droidbridge.ui.client.CapabilityRowState
+import com.droidbridge.ui.client.settledCapabilityStates
 import com.droidbridge.standalone.client.CapabilityRows
 import com.droidbridge.ui.client.RuntimeReadiness
 import com.droidbridge.ui.client.SetupRoute
@@ -42,7 +43,18 @@ class I15_SetupGuideTest {
             BackgroundKeeper.Shizuku,
         )
         assertEquals(CapabilityRowState.KeptByShizuku, settled.first().state)
-        assertTrue(settled.all { it.action == null })
+        assertEquals(CapabilityAction.TurnOffKeepAlive, settled.first().action)
+        assertTrue(settled.drop(1).all { it.action == null })
+    }
+
+    @Test
+    fun keep_alive_turned_off_is_a_settled_choice_that_can_be_turned_back_on() {
+        val keeper = BackgroundRows.project(openFacts, BackgroundKeeper.ShizukuOff).first()
+        assertEquals(CapabilityRowKey.BackgroundKeeper, keeper.key)
+        assertEquals(CapabilityRowState.KeepAliveOff, keeper.state)
+        assertEquals(CapabilityAction.TurnOnKeepAlive, keeper.action)
+        assertTrue(keeper.state in settledCapabilityStates)
+        assertTrue(BackgroundRows.attention(openFacts, BackgroundKeeper.ShizukuOff, connectionEnabled = true).none { it.key == CapabilityRowKey.BackgroundKeeper })
     }
 
     @Test

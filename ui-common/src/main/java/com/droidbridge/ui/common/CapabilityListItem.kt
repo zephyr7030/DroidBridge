@@ -109,6 +109,7 @@ fun CapabilityListItem(
     CapabilityRowState.Unknown -> R.string.state_unknown
     CapabilityRowState.KeptByModule -> R.string.state_kept_by_module
     CapabilityRowState.KeptByShizuku -> R.string.state_kept_by_shizuku
+    CapabilityRowState.KeepAliveOff -> R.string.state_keep_alive_off
     CapabilityRowState.NotConfirmed -> R.string.state_not_confirmed
     CapabilityRowState.Confirmed -> R.string.state_confirmed
 }
@@ -128,6 +129,8 @@ fun CapabilityListItem(
     CapabilityAction.OpenAppDetails -> R.string.action_open_app_details
     CapabilityAction.OpenAutostart -> R.string.action_open_settings
     CapabilityAction.ShowRecentsLockHelp -> R.string.action_show_how
+    CapabilityAction.TurnOnKeepAlive -> R.string.action_turn_on
+    CapabilityAction.TurnOffKeepAlive -> R.string.action_turn_off
 }
 
 @StringRes private fun rowReason(row: CapabilityRow): Int? {
@@ -138,7 +141,7 @@ fun CapabilityListItem(
 @DrawableRes private fun statusIcon(state: CapabilityRowState): Int = when (state) {
     CapabilityRowState.Ready, CapabilityRowState.Connected, CapabilityRowState.Active,
     CapabilityRowState.KeptByModule, CapabilityRowState.KeptByShizuku, CapabilityRowState.Confirmed -> R.drawable.ic_status_success
-    CapabilityRowState.NotConfirmed -> R.drawable.ic_status_unknown
+    CapabilityRowState.NotConfirmed, CapabilityRowState.KeepAliveOff -> R.drawable.ic_status_unknown
     CapabilityRowState.Starting, CapabilityRowState.Connecting -> R.drawable.ic_status_schedule
     CapabilityRowState.Unknown -> R.drawable.ic_status_unknown
     else -> R.drawable.ic_status_error

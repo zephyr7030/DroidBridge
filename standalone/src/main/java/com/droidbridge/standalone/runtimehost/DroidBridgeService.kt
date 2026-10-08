@@ -41,6 +41,9 @@ class DroidBridgeService : Service() {
     private lateinit var mediaProjection: MediaProjectionVisualController
     private lateinit var mcpSettings: McpSettingsController
     private lateinit var tunnelSettings: TunnelSettingsController
+    private lateinit var keepAliveSettings: KeepAliveSettings
+    @Volatile private var tunnelEnabled = false
+    @Volatile private var mcpEnabled = false
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var activeTaskCount = 0L
     @Volatile private var latestStartId = 0
@@ -181,6 +184,19 @@ class DroidBridgeService : Service() {
             return hostController.clearStrandedExecutions().also { publishHint(PROJECTION_CONTEXT) }
         }
 
+        override fun getKeepAliveEnabled(): Boolean {
+            verifyCaller()
+            return keepAliveSettings.state().getOrElse { throw IllegalStateException("IO_ERROR") }.enabled
+        }
+
+        override fun setKeepAliveEnabled(enabled: Boolean): Boolean {
+            verifyCaller()
+            keepAliveSettings.update { it.copy(enabled = enabled) }
+                .getOrElse { throw IllegalStateException("IO_ERROR") }
+            publishKeepAlive()
+            return enabled
+        }
+
         override fun resetRuntimeData(): String {
             verifyCaller()
             return hostController.resetRuntimeData().also { publishHint(PROJECTION_CONTEXT) }
@@ -214,6 +230,7 @@ class DroidBridgeService : Service() {
         hostController = graph.hostController
         mcpSettings = graph.mcpSettings
         tunnelSettings = graph.tunnelSettings
+        keepAliveSettings = graph.keepAliveSettings
         hostController.setHintSink(::publishHint)
         foregroundReasons = ForegroundReasonRegistry(
             service = this,
@@ -243,10 +260,18 @@ class DroidBridgeService : Service() {
             graph.androidExecutionRegistry,
             hostController::validatesFence,
             scope,
+            keepAliveSettings,
         )
         graph.setShizukuPrimitiveBridge(shizukuController.primitiveBridge())
         shizukuController.start()
-        tunnelSettings.enabledObserver = shizukuController::setKeepAliveWanted
+        tunnelSettings.enabledObserver = { enabled ->
+            tunnelEnabled = enabled
+            publishKeepAlive()
+        }
+        mcpSettings.enabledObserver = { enabled ->
+            mcpEnabled = enabled
+            publishKeepAlive()
+        }
         hostController.setGuardScopeSink(shizukuController::onGuardScopeReplaced)
         startRuntime()
     }
@@ -311,6 +336,15 @@ class DroidBridgeService : Service() {
         // a boot still never opens one.
         mcpSettings.restore(::setMcpForeground)
         foregroundReasons.set(ForegroundReason.SpecialUse, false, KEEPALIVE_WAKE_OWNER)
+    }
+
+    /**
+     * Shizuku wakes the Runtime after the system ends it while any agent connection is enabled,
+     * unless the user turned keep-alive off. An unreadable setting keeps nothing alive.
+     */
+    private fun publishKeepAlive() {
+        val allowed = keepAliveSettings.state().getOrNull()?.enabled == true
+        shizukuController.setKeepAliveWanted(allowed && (tunnelEnabled || mcpEnabled))
     }
 
     private fun setTunnelForeground(active: Boolean) {
@@ -406,6 +440,7 @@ class DroidBridgeService : Service() {
         // The listener never outlives its foreground keeper; the committed preference stays.
         mcpSettings.suspendListener()
         tunnelSettings.enabledObserver = null
+        mcpSettings.enabledObserver = null
         tunnelSettings.suspendRuntime(::setTunnelForeground)
         mediaProjection.stop()
         shizukuController.stop()

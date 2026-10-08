@@ -35,6 +35,7 @@ internal class RuntimeProcessGraph(application: Application) {
     val hostController: RuntimeHostController
     val mcpSettings: McpSettingsController
     val tunnelSettings: TunnelSettingsController
+    val keepAliveSettings: KeepAliveSettings
     val androidExecutionRegistry: AndroidExecutionRegistry
     val visualDisplay: VisualDisplayTracker
     val visualEncoder: VisualImageEncoder
@@ -65,6 +66,7 @@ internal class RuntimeProcessGraph(application: Application) {
             AndroidTunnelCredentialCipher(),
             AndroidMcpSettingsFileSystem(),
         )
+        keepAliveSettings = KeepAliveSettings(settingsDirectory)
         visualDisplay = VisualDisplayTracker(application)
         visualEncoder = VisualImageEncoder(application)
         androidExecutionRegistry = AndroidExecutionRegistry { key, state, reason, generation, hasExecutor ->

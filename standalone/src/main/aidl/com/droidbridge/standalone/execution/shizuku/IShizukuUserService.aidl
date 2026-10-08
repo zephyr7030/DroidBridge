@@ -29,5 +29,7 @@ interface IShizukuUserService {
     ) = 5;
     boolean cancel(IBinder token, String executionId) = 6;
     void setKeepAlive(IBinder token, boolean enabled) = 7;
+    boolean setIdleExemption(IBinder token, boolean exempt) = 8;
+    boolean setBackgroundAllowed(IBinder token, boolean allowed) = 9;
     void destroy() = 16777114;
 }

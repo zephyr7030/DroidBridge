@@ -89,6 +89,13 @@ internal class McpSettingsController(
 
     val endpoint = "http://127.0.0.1:$port/mcp"
 
+    /** Told the committed enabled value when it is set and after every commit. */
+    var enabledObserver: ((Boolean) -> Unit)? = null
+        set(value) {
+            field = value
+            value?.invoke(synchronized(lock) { load().getOrNull()?.enabled == true })
+        }
+
     fun settings(): String = synchronized(lock) {
         load().fold(::status) { IO_ERROR }
     }
@@ -209,6 +216,7 @@ internal class McpSettingsController(
             if (temporary.exists()) check(temporary.delete())
         }
         committed = next
+        enabledObserver?.invoke(next.enabled)
         next
     }.onFailure {
         // The file is authoritative again on the next read; the snapshot never runs ahead of it.

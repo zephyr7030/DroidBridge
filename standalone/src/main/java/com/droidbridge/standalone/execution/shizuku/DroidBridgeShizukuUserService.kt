@@ -67,26 +67,37 @@ class DroidBridgeShizukuUserService : IShizukuUserService.Stub {
 
     /** Whether the App's Runtime asked to be started again when its process dies (an enabled agent connection). */
     private var keepAliveWanted = false
-    private var keepAliveExempted = false
     private var unansweredWakes = 0
 
     override fun getUid(): Int = Process.myUid()
 
     /**
-     * Keeps the App alive the way the Magisk module does, as far as shell can: the App is put on the
-     * device-idle allowlist and allowed to run in the background, and a Runtime whose client token
-     * dies is woken through the exported keep-alive receiver (shell may not start its service).
+     * A Runtime whose client token dies is woken through the exported keep-alive receiver (shell may
+     * not start its service). The App decides the exemptions that admit that start separately.
      */
     @Synchronized
     override fun setKeepAlive(token: IBinder?, enabled: Boolean) {
         requireClient(requireNotNull(token), Binder.getCallingUid())
         keepAliveWanted = enabled
         unansweredWakes = 0
-        if (enabled && !keepAliveExempted) {
-            val packageName = requireNotNull(packageContext).packageName
-            keepAliveExempted = runShell("cmd", "deviceidle", "whitelist", "+$packageName") &&
-                runShell("cmd", "appops", "set", packageName, "RUN_ANY_IN_BACKGROUND", "allow")
-        }
+    }
+
+    /** Adds or removes the App on the device-idle allowlist, which admits a background FGS start. */
+    @Synchronized
+    override fun setIdleExemption(token: IBinder?, exempt: Boolean): Boolean {
+        requireClient(requireNotNull(token), Binder.getCallingUid())
+        val packageName = requireNotNull(packageContext).packageName
+        return runShell("cmd", "deviceidle", "whitelist", (if (exempt) "+" else "-") + packageName)
+    }
+
+    /** Lifts or restores the user's background restriction (`RUN_ANY_IN_BACKGROUND`). */
+    @Synchronized
+    override fun setBackgroundAllowed(token: IBinder?, allowed: Boolean): Boolean {
+        requireClient(requireNotNull(token), Binder.getCallingUid())
+        val packageName = requireNotNull(packageContext).packageName
+        return runShell(
+            "cmd", "appops", "set", packageName, "RUN_ANY_IN_BACKGROUND", if (allowed) "allow" else "ignore",
+        )
     }
 
     @Synchronized

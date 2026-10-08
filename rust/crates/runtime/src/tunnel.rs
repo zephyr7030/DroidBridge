@@ -34,6 +34,14 @@ const POLL_GUARDRAIL: Duration = Duration::from_secs(10);
 const RESPONSE_ATTEMPTS: usize = 3;
 const MAX_POLL_BODY_BYTES: usize = MCP_BODY_LIMIT_BYTES * 25 + 64 * 1024;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+/// A response POST that has not finished by then is abandoned, so a connection the network dropped
+/// without a reset never holds a command slot.
+const RESPONSE_POST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a refused credential or a removed tunnel waits before the next poll: the operator's
+/// fix, or a network that no longer intercepts the control plane, then takes effect by itself.
+const OPERATOR_RETRY: Duration = Duration::from_secs(300);
+/// How long an answer the wire protocol does not name waits before the next poll.
+const UNEXPECTED_STATUS_RETRY: Duration = Duration::from_secs(60);
 const SERVER_INFO: &str =
     r#"{"version":2,"channels":[{"name":"main","stateless":true,"proc_affinity":true}]}"#;
 
@@ -90,6 +98,11 @@ impl TunnelError {
         )
     }
 
+    /// The tunnel cannot serve until the operator or the network changes something.
+    fn holds_tunnel(&self) -> bool {
+        self.needs_operator() || matches!(self, Self::ControlPlaneStatus { status: 404, .. })
+    }
+
     /// A short, secret-free token for the status page: which way the control plane last failed.
     fn token(&self) -> String {
         match self {
@@ -140,6 +153,7 @@ pub struct TunnelRuntime {
     runtime: tokio::runtime::Runtime,
     shutdown: watch::Sender<bool>,
     ready: Arc<AtomicBool>,
+    /// The control plane refused this tunnel; it keeps retrying on a long interval meanwhile.
     failed: Arc<AtomicBool>,
     last_call_epoch_ms: Arc<AtomicI64>,
     last_error: Arc<Mutex<Option<String>>>,
@@ -157,14 +171,10 @@ impl TunnelRuntime {
         let ready = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
         let readiness = Arc::clone(&ready);
-        let observed = Arc::clone(&failed);
+        let refused = Arc::clone(&failed);
         let last_call_epoch_ms = Arc::clone(&client.last_call_epoch_ms);
         let last_error = Arc::clone(&client.last_error);
-        runtime.spawn(async move {
-            if client.run(receiver, readiness).await.is_err() {
-                observed.store(true, Ordering::SeqCst);
-            }
-        });
+        runtime.spawn(async move { client.run(receiver, readiness, refused).await });
         Ok(Self {
             runtime,
             shutdown,
@@ -277,6 +287,7 @@ pub struct TunnelClient<H> {
     response_url: Url,
     common_headers: HeaderMap,
     instance_id: Uuid,
+    post_timeout: Duration,
     last_call_epoch_ms: Arc<AtomicI64>,
     last_error: Arc<Mutex<Option<String>>>,
 }
@@ -290,6 +301,7 @@ impl<H> Clone for TunnelClient<H> {
             response_url: self.response_url.clone(),
             common_headers: self.common_headers.clone(),
             instance_id: self.instance_id,
+            post_timeout: self.post_timeout,
             last_call_epoch_ms: Arc::clone(&self.last_call_epoch_ms),
             last_error: Arc::clone(&self.last_error),
         }
@@ -388,27 +400,38 @@ impl<H: McpHost + 'static> TunnelClient<H> {
             response_url,
             common_headers,
             instance_id,
+            post_timeout: RESPONSE_POST_TIMEOUT,
             last_call_epoch_ms: Arc::new(AtomicI64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
         })
     }
 
+    /// Polls until shutdown. No answer ends the loop: a transient failure is retried with
+    /// backoff, and a refusal holds the tunnel as failed while it is retried on a long interval.
     pub(crate) async fn run(
         &self,
         mut shutdown: watch::Receiver<bool>,
         ready: Arc<AtomicBool>,
-    ) -> Result<(), TunnelError> {
+        refused: Arc<AtomicBool>,
+    ) {
         let mut failure_count = 0_u32;
         let mut commands = JoinSet::new();
         let permits = Arc::new(Semaphore::new(POLL_LIMIT));
         loop {
             if *shutdown.borrow() {
                 stop_commands(&mut commands).await;
-                return Ok(());
+                return;
             }
+            // A refused credential ends every command at once instead of repeating per command.
             if let Some(error) = reap_commands(&mut commands) {
                 stop_commands(&mut commands).await;
-                return Err(error);
+                if !self
+                    .hold(&error, &ready, &refused, &mut failure_count, &mut shutdown)
+                    .await
+                {
+                    return;
+                }
+                continue;
             }
             // The poll loop owns the control plane. One poll loop submits its commands to workers
             // and keeps polling, so a command in flight never delays the next poll; only a full
@@ -418,7 +441,7 @@ impl<H: McpHost + 'static> TunnelClient<H> {
                     changed = shutdown.changed() => {
                         if changed.is_err() || *shutdown.borrow() {
                             stop_commands(&mut commands).await;
-                            return Ok(());
+                            return;
                         }
                         continue;
                     }
@@ -428,7 +451,12 @@ impl<H: McpHost + 'static> TunnelClient<H> {
                     && error.needs_operator()
                 {
                     stop_commands(&mut commands).await;
-                    return Err(error);
+                    if !self
+                        .hold(&error, &ready, &refused, &mut failure_count, &mut shutdown)
+                        .await
+                    {
+                        return;
+                    }
                 }
                 continue;
             }
@@ -437,7 +465,7 @@ impl<H: McpHost + 'static> TunnelClient<H> {
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         stop_commands(&mut commands).await;
-                        return Ok(());
+                        return;
                     }
                     continue;
                 }
@@ -446,30 +474,24 @@ impl<H: McpHost + 'static> TunnelClient<H> {
             let (received_at, batch) = match poll {
                 Ok(result) => {
                     failure_count = 0;
+                    refused.store(false, Ordering::SeqCst);
                     ready.store(true, Ordering::SeqCst);
                     self.record_error(None, poll_started.elapsed());
                     result
                 }
-                Err(error) if error.poll_retryable() => {
-                    ready.store(false, Ordering::SeqCst);
-                    self.record_error(Some(&error), poll_started.elapsed());
-                    failure_count = failure_count.saturating_add(1);
-                    let delay = retry_delay(failure_count, self.instance_id, error.retry_after());
-                    tokio::select! {
-                        changed = shutdown.changed() => {
-                            if changed.is_err() || *shutdown.borrow() {
-                                stop_commands(&mut commands).await;
-                                return Ok(());
-                            }
-                        }
-                        _ = tokio::time::sleep(delay) => {}
-                    }
-                    continue;
-                }
                 Err(error) => {
                     self.record_error(Some(&error), poll_started.elapsed());
-                    stop_commands(&mut commands).await;
-                    return Err(error);
+                    if error.holds_tunnel() {
+                        stop_commands(&mut commands).await;
+                    }
+                    if !self
+                        .hold(&error, &ready, &refused, &mut failure_count, &mut shutdown)
+                        .await
+                    {
+                        stop_commands(&mut commands).await;
+                        return;
+                    }
+                    continue;
                 }
             };
             for command in batch {
@@ -482,6 +504,33 @@ impl<H: McpHost + 'static> TunnelClient<H> {
                     client.process_command(command, received_at).await
                 });
             }
+        }
+    }
+
+    /// Waits out one failure before the next poll; false when shutdown came first. A transient
+    /// failure leaves the tunnel connecting; any other answer reports it failed meanwhile.
+    async fn hold(
+        &self,
+        error: &TunnelError,
+        ready: &AtomicBool,
+        refused: &AtomicBool,
+        failure_count: &mut u32,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> bool {
+        ready.store(false, Ordering::SeqCst);
+        *failure_count = failure_count.saturating_add(1);
+        let backoff = retry_delay(*failure_count, self.instance_id, error.retry_after());
+        let delay = if error.holds_tunnel() {
+            OPERATOR_RETRY
+        } else if error.poll_retryable() {
+            backoff
+        } else {
+            UNEXPECTED_STATUS_RETRY.max(backoff)
+        };
+        refused.store(!error.poll_retryable(), Ordering::SeqCst);
+        tokio::select! {
+            changed = shutdown.changed() => !(changed.is_err() || *shutdown.borrow()),
+            _ = tokio::time::sleep(delay) => true,
         }
     }
 
@@ -665,6 +714,7 @@ impl<H: McpHost + 'static> TunnelClient<H> {
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(HEADER_SHARD_TOKEN, shard_token.clone())
                 .body(body.clone())
+                .timeout(self.post_timeout)
                 .send()
                 .await;
             let response = match sent {
@@ -873,25 +923,51 @@ fn valid_channel(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-".contains(&byte))
 }
 
+/// A Go-style duration such as `30s`, `4500ms`, `1.5s` or `1m30s`: one or more unsigned decimal
+/// numbers, each followed by a unit (`ns`, `us`, `µs`, `ms`, `s`, `m`, `h`).
 fn parse_response_timeout(value: &Value) -> Option<Duration> {
-    let value = value.as_str()?;
-    let (digits, unit) = if let Some(digits) = value.strip_suffix("ns") {
-        (digits, Duration::from_nanos(1))
-    } else if let Some(digits) = value.strip_suffix("us") {
-        (digits, Duration::from_micros(1))
-    } else if let Some(digits) = value.strip_suffix("ms") {
-        (digits, Duration::from_millis(1))
-    } else if let Some(digits) = value.strip_suffix('s') {
-        (digits, Duration::from_secs(1))
-    } else if let Some(digits) = value.strip_suffix('m') {
-        (digits, Duration::from_secs(60))
-    } else {
-        (value.strip_suffix('h')?, Duration::from_secs(60 * 60))
-    };
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    let mut rest = value.as_str()?;
+    if rest.is_empty() {
         return None;
     }
-    unit.checked_mul(digits.parse().ok()?)
+    let mut total = Duration::ZERO;
+    while !rest.is_empty() {
+        let number_end = rest
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(rest.len());
+        let (number, tail) = rest.split_at(number_end);
+        let unit_end = tail
+            .find(|c: char| c.is_ascii_digit() || c == '.')
+            .unwrap_or(tail.len());
+        let (unit, next) = tail.split_at(unit_end);
+        let nanos_per_unit: u128 = match unit {
+            "ns" => 1,
+            "us" | "µs" => 1_000,
+            "ms" => 1_000_000,
+            "s" => 1_000_000_000,
+            "m" => 60_000_000_000,
+            "h" => 3_600_000_000_000,
+            _ => return None,
+        };
+        let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+        if (whole.is_empty() && fraction.is_empty()) || fraction.contains('.') {
+            return None;
+        }
+        let whole: u128 = if whole.is_empty() {
+            0
+        } else {
+            whole.parse().ok()?
+        };
+        let mut nanos = whole.checked_mul(nanos_per_unit)?;
+        if !fraction.is_empty() {
+            let digits = &fraction[..fraction.len().min(18)];
+            let scale = 10_u128.pow(u32::try_from(digits.len()).ok()?);
+            nanos = nanos.checked_add(digits.parse::<u128>().ok()? * nanos_per_unit / scale)?;
+        }
+        total = total.checked_add(Duration::from_nanos(u64::try_from(nanos).ok()?))?;
+        rest = next;
+    }
+    Some(total)
 }
 
 fn flatten_headers(headers: BTreeMap<String, Vec<String>>) -> Vec<(String, String)> {
@@ -1272,13 +1348,31 @@ mod tests {
             Some(Duration::from_millis(4500))
         );
         assert_eq!(parse_response_timeout(&json!("0s")), Some(Duration::ZERO));
+        assert_eq!(
+            parse_response_timeout(&json!("1.5s")),
+            Some(Duration::from_millis(1500))
+        );
+        assert_eq!(
+            parse_response_timeout(&json!("1m30s")),
+            Some(Duration::from_secs(90))
+        );
+        assert_eq!(
+            parse_response_timeout(&json!("1h0m.25s")),
+            Some(Duration::from_millis(3_600_250))
+        );
+        assert_eq!(
+            parse_response_timeout(&json!("250µs")),
+            Some(Duration::from_micros(250))
+        );
         for invalid in [
             json!(30),
+            json!(""),
             json!(" 1s"),
-            json!("1.5s"),
-            json!("1m30s"),
             json!("-1s"),
             json!("1d"),
+            json!("1m30"),
+            json!("1..5s"),
+            json!("s"),
         ] {
             assert_eq!(parse_response_timeout(&invalid), None);
         }
@@ -1526,9 +1620,7 @@ mod tests {
         let client = gated_client(&control_plane.base_url, host.clone());
         let (shutdown, receiver) = watch::channel(false);
         let running =
-            tokio::spawn(
-                async move { client.run(receiver, Arc::new(AtomicBool::new(false))).await },
-            );
+            tokio::spawn(async move { client.run(receiver, Arc::default(), Arc::default()).await });
 
         wait_for(|| host.started() == 1).await;
         wait_for(|| control_plane.request_count("/poll") >= 2).await;
@@ -1537,7 +1629,7 @@ mod tests {
         host.release_one();
         wait_for(|| control_plane.request_count("/response") == 1).await;
         let _ = shutdown.send(true);
-        assert!(running.await.unwrap().is_ok());
+        running.await.unwrap();
         control_plane.stop();
     }
 
@@ -1549,23 +1641,20 @@ mod tests {
         let client = gated_client(&control_plane.base_url, host.clone());
         let (shutdown, receiver) = watch::channel(false);
         let running =
-            tokio::spawn(
-                async move { client.run(receiver, Arc::new(AtomicBool::new(false))).await },
-            );
+            tokio::spawn(async move { client.run(receiver, Arc::default(), Arc::default()).await });
 
         wait_for(|| host.started() == 1).await;
         let _ = shutdown.send(true);
-        let outcome = tokio::time::timeout(Duration::from_secs(5), running)
+        tokio::time::timeout(Duration::from_secs(5), running)
             .await
             .unwrap()
             .unwrap();
-        assert!(outcome.is_ok());
         assert_eq!(control_plane.request_count("/response"), 0);
         control_plane.stop();
     }
 
     #[tokio::test]
-    async fn a_refused_credential_from_a_running_command_ends_the_tunnel() {
+    async fn a_refused_credential_ends_its_commands_and_holds_the_tunnel_as_failed() {
         let host = GateHost::default();
         let control_plane = ScriptedControlPlane::new(
             vec![
@@ -1576,23 +1665,78 @@ mod tests {
         );
         let client = gated_client(&control_plane.base_url, host.clone());
         let (shutdown, receiver) = watch::channel(false);
-        let running =
-            tokio::spawn(
-                async move { client.run(receiver, Arc::new(AtomicBool::new(false))).await },
-            );
+        let ready = Arc::new(AtomicBool::new(false));
+        let refused = Arc::new(AtomicBool::new(false));
+        let running = {
+            let (ready, refused) = (Arc::clone(&ready), Arc::clone(&refused));
+            tokio::spawn(async move { client.run(receiver, ready, refused).await })
+        };
 
         wait_for(|| host.started() == 2).await;
         host.release_one();
-        let outcome = tokio::time::timeout(Duration::from_secs(10), running)
+        wait_for(|| refused.load(Ordering::SeqCst)).await;
+        assert!(!ready.load(Ordering::SeqCst));
+        // The second command was ended with the first refusal instead of answering again.
+        assert_eq!(control_plane.request_count("/response"), 1);
+        assert!(
+            !running.is_finished(),
+            "a refusal is retried later, not the end"
+        );
+        let _ = shutdown.send(true);
+        tokio::time::timeout(Duration::from_secs(5), running)
             .await
             .unwrap()
             .unwrap();
-        assert!(matches!(
-            outcome,
-            Err(TunnelError::ControlPlaneStatus { status: 401, .. })
-        ));
-        assert_eq!(control_plane.request_count("/response"), 1);
-        let _ = shutdown.send(true);
         control_plane.stop();
+    }
+
+    #[tokio::test]
+    async fn an_unexpected_poll_status_reports_failed_and_keeps_the_tunnel_alive() {
+        let (base_url, captured, server) = spawn_server(vec![400]);
+        let client = client(&base_url);
+        let (shutdown, receiver) = watch::channel(false);
+        let ready = Arc::new(AtomicBool::new(true));
+        let refused = Arc::new(AtomicBool::new(false));
+        let running = {
+            let (ready, refused) = (Arc::clone(&ready), Arc::clone(&refused));
+            tokio::spawn(async move { client.run(receiver, ready, refused).await })
+        };
+
+        wait_for(|| refused.load(Ordering::SeqCst)).await;
+        assert!(!ready.load(Ordering::SeqCst));
+        assert!(!running.is_finished());
+        let _ = shutdown.send(true);
+        tokio::time::timeout(Duration::from_secs(5), running)
+            .await
+            .unwrap()
+            .unwrap();
+        server.join().unwrap();
+        assert!(captured.lock().unwrap()[0].path.contains("/poll"));
+    }
+
+    #[tokio::test]
+    async fn a_response_post_that_never_answers_is_abandoned() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}/", listener.local_addr().unwrap());
+        // Accepts every connection and reads the request, but never answers it.
+        let held = thread::spawn(move || {
+            let mut streams = Vec::new();
+            for _ in 0..RESPONSE_ATTEMPTS {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_request(&mut stream);
+                streams.push(stream);
+            }
+            streams
+        });
+        let mut client = client(&base_url);
+        client.post_timeout = Duration::from_millis(200);
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.process_command(command(tools_list()), Instant::now()),
+        )
+        .await
+        .expect("an unanswered response POST must not hold the command forever");
+        assert!(matches!(outcome, Err(TunnelError::Transport(error)) if error.is_timeout()));
+        drop(held.join().unwrap());
     }
 }

@@ -24,8 +24,16 @@ fn start_tunnel(
     let port =
         u16::try_from(port).map_err(|_| TunnelError::InvalidConfig("MCP port is invalid"))?;
     let mut slot = tunnel_slot()?;
-    if slot.is_some() {
+    // A start is idempotent for a live tunnel; a refused one is replaced, so a start after the
+    // network changed tries again at once instead of waiting out its retry interval.
+    if slot
+        .as_ref()
+        .is_some_and(|tunnel| tunnel.state() != "failed")
+    {
         return Ok(());
+    }
+    if let Some(refused) = slot.take() {
+        refused.stop();
     }
     let facade = kotlin_facade(port, product_version.clone())
         .map_err(|_| TunnelError::InvalidConfig("MCP port or product version is invalid"))?;

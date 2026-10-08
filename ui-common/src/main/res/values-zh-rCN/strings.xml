@@ -233,7 +233,10 @@
     <string name="state_conflict">存在冲突</string>
     <string name="state_error">错误</string>
     <string name="state_kept_by_module">由 Root 模块保持</string>
-    <string name="state_kept_by_shizuku">由 Shizuku 保持（重启后需重新激活）</string>
+    <string name="state_kept_by_shizuku">被停止后（包括手动停止）由 Shizuku 唤醒（重启手机后需重新激活 Shizuku）</string>
+    <string name="state_keep_alive_off">已关闭：DroidBridge 被停止后，Shizuku 不再唤醒它</string>
+    <string name="action_turn_on">开启</string>
+    <string name="action_turn_off">关闭</string>
     <string name="state_loading">加载中</string>
     <string name="state_module_pending_reboot">已安装，重启后生效</string>
     <string name="state_not_allowed">未允许</string>

@@ -1,5 +1,47 @@
 # Changelog / 更新日志
 
+## 0.5.2
+
+### English
+
+**Changed**
+- Shizuku keep-alive in DroidBridge now also covers local MCP, not only the ChatGPT tunnel. It can be
+  turned off on the capabilities page (Keep alive → Turn off); it is on by default. While on,
+  Shizuku wakes DroidBridge after it is stopped, including when you stop it yourself.
+- Keep-alive grants the battery-optimization exemption and background permission only when they are
+  missing, and turning it off withdraws exactly what it granted.
+- The MCP tools describe their use more concisely and come with examples.
+
+**Fixed**
+- The ChatGPT connection no longer stays failed for good after the control plane refuses it, for
+  example on a network whose proxy blocks OpenAI. It now shows failed and tries again every few
+  minutes, and at once when the phone moves to another network.
+- A reply to ChatGPT that the network dropped mid-way could hold the connection while it still
+  showed running; such a reply is now given up after 30 seconds.
+- After the phone moves to another network, DroidBridge reconnects to ChatGPT at once instead of
+  waiting for the previous network's connection to time out.
+- Command deadlines written like `1m30s` or `1.5s` are understood.
+- In the root edition, a scheduled automation could fail with `wake alarm timer arm failed` after the
+  phone's clock was adjusted (for example by network time). The alarm was in fact set; it is now
+  treated as set.
+
+### 中文
+
+**变更**
+- 卓爱桥的 Shizuku 保活现在也覆盖本地 MCP，不再只跟随 ChatGPT 隧道。可在「执行环境与权限」页的「后台保活」中关闭，默认开启。
+  开启时，DroidBridge 被停止后（包括手动停止）由 Shizuku 唤醒。
+- 保活只在缺少时才授予电池优化豁免和后台运行许可，关闭时只撤销它自己授予的部分。
+- MCP 工具的说明更简洁，并附带示例。
+
+**修复**
+- ChatGPT 连接被控制面拒绝后（例如所在网络的代理拦截了 OpenAI）不再一直停在失败状态：现在显示失败，并每隔几分钟重试一次；
+  手机切换到其他网络时立即重试。
+- 回复 ChatGPT 时如果网络中途断开，连接可能一直卡住却仍显示「运行中」；现在这类回复 30 秒后放弃。
+- 手机切换网络后会立即重新连接 ChatGPT，不再等待旧网络上的连接超时。
+- 支持 `1m30s`、`1.5s` 这种写法的命令截止时间。
+- Root 版中，手机时间被调整后（例如网络自动校时），定时自动化可能报 `wake alarm timer arm failed` 而失败。
+  实际上闹钟已经设好，现在按已设好处理。
+
 ## 0.5.1
 
 ### English

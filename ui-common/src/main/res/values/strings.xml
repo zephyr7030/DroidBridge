@@ -45,6 +45,8 @@
     <string name="action_show_how">How to</string>
     <string name="action_start_capture">Start capture</string>
     <string name="action_stop_capture">Stop capture</string>
+    <string name="action_turn_on">Turn on</string>
+    <string name="action_turn_off">Turn off</string>
     <string name="action_update_module">Update module</string>
     <string name="agent_connected">%1$s connected</string>
     <string name="agent_connection_idle">Not connected</string>
@@ -234,7 +236,8 @@
     <string name="state_conflict">Conflict</string>
     <string name="state_error">Error</string>
     <string name="state_kept_by_module">Kept alive by the root module</string>
-    <string name="state_kept_by_shizuku">Kept alive by Shizuku (reactivate after reboot)</string>
+    <string name="state_keep_alive_off">Off: Shizuku no longer wakes DroidBridge after it is stopped</string>
+    <string name="state_kept_by_shizuku">Shizuku wakes DroidBridge after it is stopped, even by you (reactivate Shizuku after reboot)</string>
     <string name="state_loading">Loading</string>
     <string name="state_module_pending_reboot">Installed, takes effect after a reboot</string>
     <string name="state_not_allowed">Not allowed</string>

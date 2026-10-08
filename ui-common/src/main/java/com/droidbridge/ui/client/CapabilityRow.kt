@@ -32,6 +32,8 @@ enum class CapabilityRowState {
     Unknown,
     KeptByModule,
     KeptByShizuku,
+    /** The user turned Shizuku keep-alive off. */
+    KeepAliveOff,
     NotConfirmed,
     Confirmed,
 }
@@ -51,6 +53,8 @@ enum class CapabilityAction {
     OpenAppDetails,
     OpenAutostart,
     ShowRecentsLockHelp,
+    TurnOnKeepAlive,
+    TurnOffKeepAlive,
 }
 
 data class CapabilityRow(
@@ -67,6 +71,7 @@ val settledCapabilityStates = setOf(
     CapabilityRowState.Active,
     CapabilityRowState.KeptByModule,
     CapabilityRowState.KeptByShizuku,
+    CapabilityRowState.KeepAliveOff,
     CapabilityRowState.Confirmed,
 )
 

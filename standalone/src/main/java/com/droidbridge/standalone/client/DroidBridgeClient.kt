@@ -183,6 +183,15 @@ class DroidBridgeClient(
 
     suspend fun cancelUpdate(updateId: String): String = mcpCall { it.cancelUpdate(updateId) }
 
+    suspend fun keepAliveEnabled(): Boolean = runtimeCall(IDroidBridgeRuntime::getKeepAliveEnabled)
+
+    suspend fun setKeepAliveEnabled(enabled: Boolean): Boolean = runtimeCall { it.setKeepAliveEnabled(enabled) }
+
+    private suspend fun <T> runtimeCall(call: (IDroidBridgeRuntime) -> T): T {
+        val service = runtime ?: error("Runtime unavailable")
+        return withContext(Dispatchers.IO) { call(service) }
+    }
+
     private suspend fun mcpCall(call: (IDroidBridgeRuntime) -> String): String {
         val service = runtime ?: error("Runtime unavailable")
         return withContext(Dispatchers.IO) { call(service) }

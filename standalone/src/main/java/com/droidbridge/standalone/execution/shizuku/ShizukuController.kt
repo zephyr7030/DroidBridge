@@ -1,8 +1,10 @@
 package com.droidbridge.standalone.execution.shizuku
 
+import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.os.Binder
+import android.os.PowerManager
 import android.os.SystemClock
 import com.droidbridge.standalone.BuildConfig
 import com.droidbridge.standalone.execution.android.AndroidExecutionBridge
@@ -11,6 +13,7 @@ import com.droidbridge.standalone.execution.android.AndroidExecutionRequest
 import com.droidbridge.standalone.execution.android.AndroidExecutionResult
 import com.droidbridge.standalone.execution.android.AndroidPrimitive
 import com.droidbridge.standalone.execution.android.RegisteredCapabilityState
+import com.droidbridge.standalone.runtimehost.KeepAliveSettings
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,6 +29,7 @@ internal class ShizukuController(
     private val registry: AndroidExecutionRegistry,
     private val validatesFence: (String, Long, String) -> Boolean,
     private val scope: CoroutineScope,
+    private val keepAliveSettings: KeepAliveSettings,
 ) {
     private inner class Session(
         override val generation: Long,
@@ -83,18 +87,52 @@ internal class ShizukuController(
 
     @Volatile
     private var keepAliveWanted = false
+    private val keepAliveLock = Any()
 
     /** Asks the shell-side user service to wake the Runtime if it dies while a connection is enabled. */
     fun setKeepAliveWanted(wanted: Boolean) {
         keepAliveWanted = wanted
         val current = synchronized(this) { session } ?: return
-        // The first request runs the shell allowlist commands; keep them off the caller's lock.
+        // Granting or withdrawing an exemption runs shell commands; keep them off the caller's lock.
         scope.launch { pushKeepAlive(current.remote, current.token) }
     }
 
-    private fun pushKeepAlive(remote: IShizukuUserService, token: Binder) {
-        // A user service from an older build of the same version code has no such transaction.
-        runCatching { remote.setKeepAlive(token, keepAliveWanted) }
+    /** Pushes run one at a time and each reads the latest wish, so the last one leaves it in force. */
+    private fun pushKeepAlive(remote: IShizukuUserService, token: Binder) = synchronized(keepAliveLock) {
+        val wanted = keepAliveWanted
+        // A user service from an older build of the same version code has no such transactions.
+        runCatching { reconcileExemptions(remote, token, wanted) }
+        runCatching { remote.setKeepAlive(token, wanted) }
+    }
+
+    /**
+     * A wake from the background may start the Runtime's foreground service only while the App is
+     * exempt from battery optimization and not background restricted. Keep-alive grants what is
+     * missing and records it; when keep-alive ends it withdraws only what it granted.
+     */
+    private fun reconcileExemptions(remote: IShizukuUserService, token: Binder, wanted: Boolean) {
+        val packageName = application.packageName
+        val power = application.getSystemService(PowerManager::class.java)
+        val activity = application.getSystemService(ActivityManager::class.java)
+        keepAliveSettings.update { granted ->
+            var next = granted
+            if (wanted) {
+                if (!power.isIgnoringBatteryOptimizations(packageName) && remote.setIdleExemption(token, true)) {
+                    next = next.copy(idleExemptionGranted = true)
+                }
+                if (activity.isBackgroundRestricted && remote.setBackgroundAllowed(token, true)) {
+                    next = next.copy(backgroundGranted = true)
+                }
+            } else {
+                if (next.idleExemptionGranted && remote.setIdleExemption(token, false)) {
+                    next = next.copy(idleExemptionGranted = false)
+                }
+                if (next.backgroundGranted && remote.setBackgroundAllowed(token, false)) {
+                    next = next.copy(backgroundGranted = false)
+                }
+            }
+            next
+        }
     }
 
     @Synchronized

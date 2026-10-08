@@ -7,8 +7,8 @@ import com.droidbridge.ui.client.CapabilityRowKey
 import com.droidbridge.ui.client.CapabilityRowState
 import com.droidbridge.ui.client.RuntimeSnapshot
 
-/** Who keeps the Runtime process alive when the system ends it. */
-enum class BackgroundKeeper { Shizuku, None }
+/** Who keeps the Runtime process alive when the system ends it; ShizukuOff is the user's choice. */
+enum class BackgroundKeeper { Shizuku, ShizukuOff, None }
 
 /** The device facts behind the background-running group; the App reads them on every resume. */
 data class BackgroundFacts(
@@ -28,16 +28,23 @@ data class BackgroundFacts(
  * rather than on one connection's page.
  */
 object BackgroundRows {
-    fun keeper(snapshot: RuntimeSnapshot?): BackgroundKeeper =
-        if (snapshot?.grants?.get("shizuku.shell")?.state == AvailabilityState.Available) {
-            BackgroundKeeper.Shizuku
-        } else {
-            BackgroundKeeper.None
-        }
+    /** An unanswered keep-alive setting shows no keeper rather than a guess. */
+    fun keeper(snapshot: RuntimeSnapshot?, keepAliveEnabled: Boolean?): BackgroundKeeper = when {
+        snapshot?.grants?.get("shizuku.shell")?.state != AvailabilityState.Available -> BackgroundKeeper.None
+        keepAliveEnabled == true -> BackgroundKeeper.Shizuku
+        keepAliveEnabled == false -> BackgroundKeeper.ShizukuOff
+        else -> BackgroundKeeper.None
+    }
 
     fun project(facts: BackgroundFacts, keeper: BackgroundKeeper): List<CapabilityRow> = buildList {
-        if (keeper == BackgroundKeeper.Shizuku) {
-            add(CapabilityRow(CapabilityRowKey.BackgroundKeeper, CapabilityRowState.KeptByShizuku))
+        when (keeper) {
+            BackgroundKeeper.Shizuku -> add(
+                CapabilityRow(CapabilityRowKey.BackgroundKeeper, CapabilityRowState.KeptByShizuku, CapabilityAction.TurnOffKeepAlive),
+            )
+            BackgroundKeeper.ShizukuOff -> add(
+                CapabilityRow(CapabilityRowKey.BackgroundKeeper, CapabilityRowState.KeepAliveOff, CapabilityAction.TurnOnKeepAlive),
+            )
+            BackgroundKeeper.None -> Unit
         }
         add(
             if (facts.batteryUnrestricted) {

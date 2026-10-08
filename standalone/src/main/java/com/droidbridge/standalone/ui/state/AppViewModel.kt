@@ -29,6 +29,8 @@ data class AppUiState(
     val backgroundConfirmations: BackgroundConfirmations = BackgroundConfirmations(),
     /** How the user chose to run DroidBridge on this phone; null until first setup commits one. */
     val setupRoute: SetupRoute? = null,
+    /** Whether Shizuku may wake the Runtime after it is stopped; null until the Runtime answers. */
+    val keepAliveEnabled: Boolean? = null,
 )
 
 class AppViewModel(
@@ -36,6 +38,7 @@ class AppViewModel(
     private val client: DroidBridgeClient,
 ) : ViewModel() {
     private val maintenance = MutableStateFlow<MaintenanceState?>(null)
+    private val keepAlive = MutableStateFlow<Boolean?>(null)
 
     val state: StateFlow<AppUiState> = combine(
         settings.onboardingCompleted,
@@ -48,12 +51,16 @@ class AppViewModel(
     }
         .combine(settings.backgroundConfirmations) { state, confirmations -> state.copy(backgroundConfirmations = confirmations) }
         .combine(settings.setupRoute) { state, route -> state.copy(setupRoute = route) }
+        .combine(keepAlive) { state, enabled -> state.copy(keepAliveEnabled = enabled) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
 
     init {
         viewModelScope.launch {
             client.state.collect { connection ->
-                if (connection is ClientState.Available || connection is ClientState.Unavailable) refreshMaintenance()
+                if (connection is ClientState.Available || connection is ClientState.Unavailable) {
+                    refreshMaintenance()
+                    refreshKeepAlive()
+                }
             }
         }
     }
@@ -82,6 +89,19 @@ class AppViewModel(
             runCatching { client.maintenanceState() }.getOrNull()
                 ?.let(MaintenanceReplies::state)
                 ?.let { maintenance.value = it }
+        }
+    }
+
+    fun refreshKeepAlive() {
+        viewModelScope.launch {
+            runCatching { client.keepAliveEnabled() }.onSuccess { keepAlive.value = it }
+        }
+    }
+
+    /** A failed write leaves the answered value in place; the row shows what the Runtime holds. */
+    fun setKeepAliveEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            runCatching { client.setKeepAliveEnabled(enabled) }.onSuccess { keepAlive.value = it }
         }
     }
 

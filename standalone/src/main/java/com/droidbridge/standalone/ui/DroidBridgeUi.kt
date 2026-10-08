@@ -376,7 +376,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                     homeState.projection?.mcp?.let { it != HomeMcpRow.Off } == true
                 val rows = snapshot?.let { CapabilityRows.project(it, setup.notificationListenerGranted) }.orEmpty()
                 val attention = rows.filter { it.action != null && it.state !in settledCapabilityStates } +
-                    BackgroundRows.attention(setup.background, BackgroundRows.keeper(snapshot), connectionEnabled)
+                    BackgroundRows.attention(setup.background, BackgroundRows.keeper(snapshot, state.keepAliveEnabled), connectionEnabled)
                 // Without a snapshot nothing has been checked yet, which is not the same as all set.
                 val checking = snapshot == null || rows.any { it.state in checkingCapabilityStates }
                 PrimaryShell(
@@ -707,7 +707,7 @@ private fun CapabilitiesScreen(
             }
         },
     ) { padding ->
-        val projected = BackgroundRows.project(setup.background, BackgroundRows.keeper(snapshot))
+        val projected = BackgroundRows.project(setup.background, BackgroundRows.keeper(snapshot, state.keepAliveEnabled))
         // First setup asks only for the chosen route's steps; opened later, the page reports every
         // fact this device has, because a stronger backend may have arrived since.
         val steps = state.setupRoute
@@ -869,6 +869,8 @@ private fun rememberCapabilityActionHandler(
                 DeviceSetup.openVendorAutostart(context)
             }
             CapabilityAction.ShowRecentsLockHelp -> dialog = SetupDialog.RecentsLock
+            CapabilityAction.TurnOnKeepAlive -> viewModel.setKeepAliveEnabled(true)
+            CapabilityAction.TurnOffKeepAlive -> viewModel.setKeepAliveEnabled(false)
             CapabilityAction.StartCapture -> {
                 if (shouldRequestPostNotifications(context)) {
                     notifications.launch(Manifest.permission.POST_NOTIFICATIONS)

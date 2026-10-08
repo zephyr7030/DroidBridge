@@ -27,4 +27,6 @@ interface IDroidBridgeRuntime {
     String cancelUpdate(String updateId);
     int getStrandedExecutions();
     String clearStrandedExecutions();
+    boolean getKeepAliveEnabled();
+    boolean setKeepAliveEnabled(boolean enabled);
 }
