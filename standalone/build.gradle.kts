@@ -42,16 +42,13 @@ android {
         buildConfigField("String", "GITHUB_OWNER", quoted(releaseConfig.getProperty("github_owner")))
         buildConfigField("String", "GITHUB_REPO", quoted(releaseConfig.getProperty("github_repo")))
         ndk {
-            abiFilters += "arm64-v8a"
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
 
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            ndk {
-                abiFilters += "x86_64"
-            }
             buildConfigField("String", "RELEASE_MANIFEST_URL", quoted("UNCONFIGURED"))
             buildConfigField("String", "RELEASE_KEY_ID", quoted("UNCONFIGURED"))
             buildConfigField("String", "RELEASE_PUBLIC_KEY_BASE64", quoted("UNCONFIGURED"))

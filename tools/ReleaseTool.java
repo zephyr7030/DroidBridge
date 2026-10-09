@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.CRC32;
@@ -47,6 +48,7 @@ import java.util.zip.ZipOutputStream;
  *   sign RELEASE_JSON PKCS8_PEM OUT_SIG            SHA256withECDSA over the exact manifest bytes
  *   sums DIST_DIR VERSION apk|magisk               DIST_DIR/SHA256SUMS.txt over that release's fixed files
  *   update-json VERSION OUT                        canonical Magisk updateJson for the module release
+ *   verify-apk-native APK app|root                 verify the exact ABI set, ELF headers and App guard payload
  *   apk-unsigned APK                               fail if the APK carries any signature
  *   verify-release DIST_DIR VERSION unsigned|signed full APK manifest/signature/checksum verification
  *   verify-module DIST_DIR VERSION                 module ZIP contents, checksums and committed update.json
@@ -134,6 +136,10 @@ public final class ReleaseTool {
             case "update-json" -> {
                 expectArgs(args, 3);
                 Files.writeString(Path.of(args[2]), updateJson(args[1]), StandardCharsets.UTF_8);
+            }
+            case "verify-apk-native" -> {
+                expectArgs(args, 3);
+                verifyApkNative(Path.of(args[1]), args[2]);
             }
             case "apk-unsigned" -> {
                 expectArgs(args, 2);
@@ -494,11 +500,52 @@ public final class ReleaseTool {
         verifySums(dist, releaseFiles(version, "apk"));
 
         Path apk = dist.resolve(apkName(version));
+        verifyApkNative(apk, "app");
         if (mode == Mode.UNSIGNED) {
             requireUnsignedApk(apk);
             System.out.println("PASS APK carries no signature");
         }
         System.out.println("RESULT PASS verify-release " + mode.name().toLowerCase());
+    }
+
+    private static void verifyApkNative(Path apk, String edition) throws IOException {
+        Map<String, Integer> machines = switch (edition) {
+            case "app" -> Map.of("arm64-v8a", 183, "x86_64", 62);
+            case "root" -> Map.of("arm64-v8a", 183);
+            default -> throw new IllegalStateException("native edition must be app or root");
+        };
+        TreeSet<String> abis = new TreeSet<>();
+        try (ZipFile zip = new ZipFile(apk.toFile())) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory() || !entry.getName().startsWith("lib/")) continue;
+                String[] parts = entry.getName().split("/");
+                check(parts.length == 3 && parts[2].endsWith(".so"), "native entry path " + entry.getName());
+                String abi = parts[1];
+                abis.add(abi);
+                Integer machine = machines.get(abi);
+                check(machine != null, "supported native ABI " + abi);
+                byte[] header;
+                try (InputStream input = zip.getInputStream(entry)) {
+                    header = input.readNBytes(20);
+                }
+                check(header.length == 20 && header[0] == 0x7f && header[1] == 'E'
+                        && header[2] == 'L' && header[3] == 'F' && header[4] == 2 && header[5] == 1,
+                        "64-bit little-endian ELF " + entry.getName());
+                int actualMachine = Byte.toUnsignedInt(header[18]) | (Byte.toUnsignedInt(header[19]) << 8);
+                check(actualMachine == machine, "ELF machine matches " + entry.getName());
+            }
+            check(abis.equals(new TreeSet<>(machines.keySet())), "exact native ABI set " + machines.keySet());
+            if (edition.equals("app")) {
+                for (String abi : abis) {
+                    for (String library : List.of("libapp_native.so", "libdroidbridge_exec_guard.so")) {
+                        check(zip.getEntry("lib/" + abi + "/" + library) != null,
+                                "App carries " + abi + "/" + library);
+                    }
+                }
+            }
+        }
     }
 
     private static void verifySums(Path dist, List<String> expected) throws IOException {

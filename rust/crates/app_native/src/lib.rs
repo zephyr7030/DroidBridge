@@ -1677,10 +1677,21 @@ pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime
                     Ok(true) => Ok(true),
                     Ok(false) => {
                         quarantine_app_guard(host)?;
+                        record_host_fault(host, "CLEANUP_UNVERIFIED", "app_guard_probe")?;
                         Ok(false)
                     }
-                    Err(_) => {
+                    Err(error) => {
                         quarantine_app_guard(host)?;
+                        let step = if error.reason.starts_with("app_guard_probe_") {
+                            error.reason.to_owned()
+                        } else {
+                            format!("app_guard_probe_{}", error_code_token(error.code))
+                        };
+                        let phase = match error.os_error {
+                            Some(errno) => format!("{step}_errno_{errno}"),
+                            None => step,
+                        };
+                        record_host_fault(host, "CLEANUP_UNVERIFIED", &phase)?;
                         Ok(false)
                     }
                 }
@@ -1947,29 +1958,7 @@ pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime
         .with_env(|owned| -> jni::errors::Result<jboolean> {
             let code = code.mutf8_chars(owned)?.to_str().into_owned();
             let phase = phase.mutf8_chars(owned)?.to_str().into_owned();
-            let result = with_host(|host| {
-                let now = Utc::now();
-                let now_ms = u64::try_from(now.timestamp_millis()).map_err(|_| {
-                    DomainError::new(ErrorCode::InternalError, "clock is before epoch")
-                })?;
-                FaultFileStore::new(&host.base, FaultRole::Host).append(
-                    FaultRecord {
-                        record_id: new_uuid()?,
-                        at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
-                        component: "apk_host_controller".to_owned(),
-                        code,
-                        phase,
-                        product_version: host.product_version.clone(),
-                        boot_id: host.boot_id.clone(),
-                        runtime_instance_id: Some(host.runtime_instance_id.clone()),
-                        execution_id: None,
-                        exit_code: None,
-                        signal: None,
-                        repeat_count: 1,
-                    },
-                    now_ms,
-                )
-            });
+            let result = with_host(|host| record_host_fault(host, &code, &phase));
             Ok(if result.is_ok() { JNI_TRUE } else { JNI_FALSE })
         })
         .into_outcome()
@@ -2934,6 +2923,29 @@ fn new_uuid() -> Result<UuidV4, DomainError> {
         .map_err(|_| DomainError::new(ErrorCode::InternalError, "UUID generation failed"))
 }
 
+fn record_host_fault(host: &NativeHost, code: &str, phase: &str) -> Result<(), DomainError> {
+    let now = Utc::now();
+    let now_ms = u64::try_from(now.timestamp_millis())
+        .map_err(|_| DomainError::new(ErrorCode::InternalError, "clock is before epoch"))?;
+    FaultFileStore::new(&host.base, FaultRole::Host).append(
+        FaultRecord {
+            record_id: new_uuid()?,
+            at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+            component: "apk_host_controller".to_owned(),
+            code: code.to_owned(),
+            phase: phase.to_owned(),
+            product_version: host.product_version.clone(),
+            boot_id: host.boot_id.clone(),
+            runtime_instance_id: Some(host.runtime_instance_id.clone()),
+            execution_id: None,
+            exit_code: None,
+            signal: None,
+            repeat_count: 1,
+        },
+        now_ms,
+    )
+}
+
 fn parse_capability_state(value: &str) -> Result<CapabilityState, DomainError> {
     match value {
         "available" => Ok(CapabilityState::Available),
@@ -3007,7 +3019,7 @@ fn verify_app_guard(guard_path: &Path) -> Result<bool, DomainError> {
     if !guard_path.is_absolute() || !guard_path.is_file() {
         return Err(DomainError::new(
             ErrorCode::NotFound,
-            "execution guard is not installed",
+            "app_guard_probe_guard_path",
         ));
     }
     let exited = run_guard_probe(guard_path, GuardProbe::ChildExit)?;
@@ -3028,8 +3040,6 @@ fn probe_app_guard(host: &NativeHost, guard_path: &Path) -> Result<bool, DomainE
             host._lease.live().host_generation,
             true,
         )?;
-    } else {
-        quarantine_app_guard(host)?;
     }
     Ok(clean)
 }
@@ -3079,7 +3089,10 @@ fn run_guard_probe(guard_path: &Path, mode: GuardProbe) -> Result<bool, DomainEr
 
     let scope = guard::scope()?;
     if !guard_proof_capacity_available(scope.base()) {
-        return Ok(false);
+        return Err(DomainError::new(
+            ErrorCode::ResourceLimit,
+            "app_guard_probe_proof_capacity",
+        ));
     }
     let _probe = GUARD_PROBE_LOCK
         .lock()
@@ -3140,7 +3153,13 @@ fn run_guard_probe(guard_path: &Path, mode: GuardProbe) -> Result<bool, DomainEr
             command.arg("--probe-owner-death-child").arg(&marker_path);
         }
     }
-    let mut child = command.spawn().map_err(io_error)?;
+    let spawn_phase = match mode {
+        GuardProbe::ChildExit => "app_guard_probe_child_exit_spawn",
+        GuardProbe::OwnerLost => "app_guard_probe_owner_lost_spawn",
+    };
+    let mut child = command
+        .spawn()
+        .map_err(|error| DomainError::os(ErrorCode::ExecutionFailed, spawn_phase, &error))?;
     drop(proof);
     drop(lifetime_read);
     let mut lifetime_write = Some(lifetime_write);
@@ -3151,7 +3170,10 @@ fn run_guard_probe(guard_path: &Path, mode: GuardProbe) -> Result<bool, DomainEr
         }
         if !marker_path.exists() {
             drop(lifetime_write.take());
-            return Ok(false);
+            return Err(DomainError::new(
+                ErrorCode::Timeout,
+                "app_guard_probe_owner_marker_timeout",
+            ));
         }
         drop(lifetime_write.take());
     }
@@ -3162,7 +3184,10 @@ fn run_guard_probe(guard_path: &Path, mode: GuardProbe) -> Result<bool, DomainEr
         }
         if Instant::now() >= deadline {
             drop(lifetime_write.take());
-            return Ok(false);
+            return Err(DomainError::new(
+                ErrorCode::Timeout,
+                "app_guard_probe_guard_exit_timeout",
+            ));
         }
         thread::sleep(Duration::from_millis(20));
     };
@@ -3193,6 +3218,12 @@ fn run_guard_probe(guard_path: &Path, mode: GuardProbe) -> Result<bool, DomainEr
             fs::remove_file(marker_path).map_err(io_error)?;
         }
         sync_directory(&directory)?;
+    } else {
+        let phase = match mode {
+            GuardProbe::ChildExit => "app_guard_probe_child_exit_verification",
+            GuardProbe::OwnerLost => "app_guard_probe_owner_lost_verification",
+        };
+        return Err(DomainError::new(ErrorCode::CancelFailed, phase));
     }
     Ok(clean)
 }

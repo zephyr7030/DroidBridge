@@ -1,5 +1,19 @@
 # Changelog / 更新日志
 
+## 0.5.3
+
+### English
+
+- DroidBridge (no root): the release APK now supports x86_64 devices alongside ARM64, with native Runtime libraries and execution guards for both architectures. The download filename and in-app update path stay the same.
+- DroidBridge (no root): App guard probe faults retain the failing launch or verification step and the OS errno when available. Failed probes still withdraw readiness and quarantine execution.
+- Native x86_64 packaging is supported; ChromeOS ARC execution and Shizuku behavior still require device verification.
+
+### 中文
+
+- 卓爱桥（免 Root）：正式 APK 新增 x86_64 设备支持，同时保留 ARM64；两种架构均包含原生 Runtime 库与执行 guard。下载文件名与 App 内更新路径保持不变。
+- 卓爱桥（免 Root）：App guard 探测故障保留启动或验证的失败步骤，以及可用的系统 errno；探测失败时仍撤回就绪状态并隔离执行。
+- 支持原生 x86_64 打包；ChromeOS ARC 的执行与 Shizuku 行为仍需真机验证。
+
 ## 0.5.2
 
 ### English

@@ -74,24 +74,15 @@ if ($frontendVersion -ne $version -or $frontendCode -ne $versionCode) {
 }
 Pass "release identities com.droidbridge.standalone and com.droidbridge.root $version ($versionCode), min 33, target/compile 37"
 
-# 4. Exactly the arm64-v8a ABI set in both APKs, matching the arm64 module executables.
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-function Read-Abis([string]$apk) {
-    $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $apk))
-    try {
-        return @($zip.Entries | Where-Object { $_.FullName -like 'lib/*' } | ForEach-Object { $_.FullName.Split('/')[1] } | Sort-Object -Unique)
-    } finally { $zip.Dispose() }
-}
-foreach ($built in $standaloneApk, $frontendApk) {
-    $abis = Read-Abis $built
-    if (($abis -join ',') -ne 'arm64-v8a') { Fail "$built native ABI set is exactly arm64-v8a (found $($abis -join ','))" }
-}
+# 4. The App ships ARM64 and x86_64 Runtime/guard binaries; the root edition remains ARM64.
+Native 'App native payload' { java tools/ReleaseTool.java verify-apk-native $standaloneApk app }
+Native 'root frontend native payload' { java tools/ReleaseTool.java verify-apk-native $frontendApk root }
 $staging = 'root-frontend/build/generated/magiskModule/stable'
 foreach ($binary in 'bin/droidbridged', 'bin/droidbridge-supervisor', 'bin/droidbridge-exec-guard', 'module.prop', 'frontend.package') {
     if (-not (Test-Path (Join-Path $staging $binary))) { Fail "module staging contains $binary" }
 }
 if (Test-Path (Join-Path $staging 'frontend.apk')) { Fail 'stable staging carries no frontend before it is signed' }
-Pass 'both APKs carry exactly arm64-v8a and the module executables are staged'
+Pass 'App ARM64/x86_64 and root ARM64 native payloads verify; module executables are staged'
 
 # 5. APK signing (signed mode) or unsigned candidates. One key signs both editions' APKs.
 $dist = Join-Path $root "build/release/$version-$Mode"
