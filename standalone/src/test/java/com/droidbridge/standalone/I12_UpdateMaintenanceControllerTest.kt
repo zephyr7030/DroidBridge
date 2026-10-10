@@ -9,6 +9,12 @@ import com.droidbridge.standalone.runtimehost.MaintenancePhase
 import com.droidbridge.standalone.runtimehost.UpdateMaintenanceController
 import com.droidbridge.standalone.runtimehost.UpdateMaintenanceRecord
 import com.droidbridge.standalone.runtimehost.UpdateMaintenanceStore
+import com.droidbridge.standalone.runtimehost.UpdateInstallAttempt
+import com.droidbridge.standalone.runtimehost.UpdateInstallerCallback
+import com.droidbridge.standalone.product.update.UpdateMaintenanceReplies
+import com.droidbridge.standalone.product.update.MaintenanceReply
+import java.io.IOException
+import org.junit.Assert.assertThrows
 import java.io.File
 import java.nio.file.Files
 import java.security.KeyFactory
@@ -42,20 +48,23 @@ class I12_UpdateMaintenanceControllerTest {
     private val base = Files.createTempDirectory("canonical").toFile()
     private val cache = Files.createTempDirectory("updates").toFile()
     private val store = UpdateMaintenanceStore(base, restrictToOwner = {}, syncDirectory = {})
+    private var nowMillis = System.currentTimeMillis()
     private val apkBytes = ByteArray(4096) { (it % 251).toByte() }
 
     private inner class FakeHost : MaintenanceHost {
         var busy = false
+        var closeFailure: String? = null
         var admissionOpen = true
         override fun ensureApkHost(): String? = null
-        override fun closeAdmission(): String? = if (busy) "HOST_TRANSITION_PENDING" else null.also { admissionOpen = false }
+        override fun closeAdmission(): String? = if (closeFailure != null) closeFailure else if (busy) "HOST_TRANSITION_PENDING" else null.also { admissionOpen = false }
         override fun reopenAdmission(): Boolean = true.also { admissionOpen = true }
     }
 
     private inner class FakePackages : InstalledPackageFacts {
         var versionCode = 999L
+        var actualSigner = signer
         override fun installedVersionCode() = versionCode
-        override fun installedSignerSha256(): String = signer
+        override fun installedSignerSha256(): String = actualSigner
         override fun archive(file: File) = ArchiveFacts("com.droidbridge.standalone", 1000, signer)
     }
 
@@ -69,9 +78,9 @@ class I12_UpdateMaintenanceControllerTest {
         }
         override fun create(size: Long) = nextId++.also { live += it }
         override fun exists(sessionId: Int) = sessionId in live
-        override fun writeAndCommit(sessionId: Int, apk: File, size: Long, sha256: String) {
+        override fun writeAndCommit(updateId: String, attempt: UpdateInstallAttempt, apk: File, size: Long, sha256: String) {
             recordedSessionAtWrite = store.read()?.apkSessionId
-            check(!failWrite) { "write failed" }
+            if (failWrite) throw IOException("write failed")
         }
         override fun abandon(sessionId: Int) {
             live -= sessionId
@@ -89,6 +98,7 @@ class I12_UpdateMaintenanceControllerTest {
         packages = packages,
         installer = installer,
         cacheRoot = cache,
+        nowMillis = { nowMillis },
     )
 
     /** The fixture manifest re-signed with the test key over synthetic artifact bytes cached locally. */
@@ -167,7 +177,7 @@ class I12_UpdateMaintenanceControllerTest {
         val (manifest, signature) = signedRelease()
         val id = updateId(controller.beginProductUpdate(manifest, signature))
         installer.failWrite = true
-        assertEquals("STALE_AUTHORITY", error(controller.installApk(id)))
+        assertEquals("IO_ERROR", error(controller.installApk(id)))
         assertEquals(MaintenancePhase.Prepared, store.read()!!.phase)
         assertTrue(installer.live.isEmpty())
 
@@ -192,6 +202,201 @@ class I12_UpdateMaintenanceControllerTest {
         assertEquals("INVALID_ARGUMENT", error(other.beginProductUpdate(manifest, signature)))
         assertNull(store.read())
         assertTrue(host.admissionOpen)
+    }
+
+    private fun installing(): UpdateInstallerCallback {
+        val (manifest, signature) = signedRelease()
+        val id = updateId(controller.beginProductUpdate(manifest, signature))
+        assertNull(error(controller.installApk(id)))
+        val attempt = store.read()!!.lastAttempt!!
+        return UpdateInstallerCallback(id, attempt.id, attempt.sessionId, 6)
+    }
+
+    @Test
+    fun preparedExternalReplacementReconcilesOnlyMatchingVersionAndSigner() {
+        val (manifest, signature) = signedRelease()
+        controller.beginProductUpdate(manifest, signature)
+        packages.versionCode = 1000
+        packages.actualSigner = "0".repeat(64)
+        controller.recover()
+        assertEquals(MaintenancePhase.Prepared, store.read()!!.phase)
+        assertFalse(host.admissionOpen)
+        packages.actualSigner = signer
+        controller.recover()
+        assertNull(store.read())
+        assertTrue(host.admissionOpen)
+    }
+
+    @Test
+    fun admissionRefusalPreservesStageAndNeverCreatesInstallerWork() {
+        val (manifest, signature) = signedRelease()
+        host.closeFailure = "IO_ERROR"
+        val refusal = UpdateMaintenanceReplies.mutation(controller.beginProductUpdate(manifest, signature))
+        assertEquals(MaintenanceReply.Refused("IO_ERROR", "close_admission"), refusal)
+        assertNull(store.read())
+        assertTrue(installer.live.isEmpty())
+    }
+
+    @Test
+    fun installerFailureSurvivesEitherCallbackRecoveryOrder() {
+        for (recoverFirst in listOf(false, true)) {
+            val callback = installing()
+            installer.live.clear()
+            if (recoverFirst) controller.recover()
+            assertTrue(controller.installerResult(callback, { true }, null))
+            controller.recover()
+            val record = store.read()!!
+            assertEquals(MaintenancePhase.Prepared, record.phase)
+            assertNull(record.apkSessionId)
+            assertEquals(callback.attemptId, record.lastAttempt!!.id)
+            assertEquals("INSTALLER_STORAGE", record.lastAttempt.failure!!.code)
+            assertEquals("INSTALLER_STORAGE", UpdateMaintenanceReplies.state(controller.state())!!.record!!.installFailure!!.code)
+            assertFalse(host.admissionOpen)
+            assertNull(error(controller.cancel(callback.updateId)))
+        }
+    }
+
+    @Test
+    fun retryRejectsOldCallbackEvenWhenThePlatformReusesSessionId() {
+        val old = installing()
+        installer.live.clear()
+        controller.recover()
+        installer.nextId = old.sessionId
+        assertNull(error(controller.installApk(old.updateId)))
+        val newAttempt = store.read()!!.lastAttempt!!
+        assertFalse(old.attemptId == newAttempt.id)
+        assertEquals(old.sessionId, newAttempt.sessionId)
+        var launches = 0
+        assertFalse(controller.installerResult(old.copy(status = -1), { true }) { launches++ })
+        assertFalse(controller.installerResult(old, { true }, null))
+        assertEquals(0, launches)
+        assertNull(store.read()!!.lastAttempt!!.failure)
+        controller.cancel(old.updateId)
+        assertFalse(controller.installerResult(old.copy(attemptId = newAttempt.id), { true }) { launches++ })
+        assertNull(store.read())
+    }
+
+    @Test
+    fun duplicateOrTerminalCallbacksCannotReopenConfirmationOrExtendRetention() {
+        val callback = installing()
+        var launches = 0
+        val pending = callback.copy(status = -1)
+        assertTrue(controller.installerResult(pending, { true }) { launches++ })
+        assertFalse(controller.installerResult(pending, { true }) { launches++ })
+        assertEquals(1, launches)
+        assertTrue(controller.installerResult(callback, { true }, null))
+        val failure = store.read()!!.lastAttempt!!.failure
+        nowMillis += 1000
+        assertFalse(controller.installerResult(callback.copy(status = 2), { true }, null))
+        assertFalse(controller.installerResult(pending, { true }) { launches++ })
+        assertEquals(failure, store.read()!!.lastAttempt!!.failure)
+        assertEquals(1, launches)
+    }
+
+    @Test
+    fun expiredOrUnavailableConfirmationNeverLaunchesAndDoesNotMarkSuccess() {
+        val callback = installing()
+        var launches = 0
+        assertFalse(controller.installerResult(callback.copy(status = -1), { false }) { launches++ })
+        assertFalse(store.read()!!.lastAttempt!!.confirmationHandled)
+        assertTrue(controller.installerResult(callback.copy(status = -1), { true }, null))
+        assertEquals("CONFIRMATION_MISSING", store.read()!!.lastAttempt!!.failure!!.code)
+        assertEquals(0, launches)
+        assertFalse(store.read()!!.lastAttempt!!.terminalCallbackSeen)
+    }
+
+    @Test
+    fun missingUnknownAndSuccessStatusesNeverProveAnInstallation() {
+        val callback = installing()
+        assertTrue(controller.installerResult(callback.copy(status = null), { true }, null))
+        assertEquals("INSTALLER_STATUS_MISSING", store.read()!!.lastAttempt!!.failure!!.code)
+        assertTrue(controller.installerResult(callback.copy(status = 999), { true }, null))
+        assertEquals("INSTALLER_STATUS_UNKNOWN", store.read()!!.lastAttempt!!.failure!!.code)
+        assertFalse(store.read()!!.lastAttempt!!.terminalCallbackSeen)
+        assertTrue(controller.installerResult(callback.copy(status = 0), { true }, null))
+        controller.recover()
+        assertEquals(MaintenancePhase.ApkInstalling, store.read()!!.phase)
+        assertFalse(host.admissionOpen)
+        packages.versionCode = 1000
+        controller.recover()
+        assertNull(store.read())
+        assertTrue(host.admissionOpen)
+    }
+
+    @Test
+    fun expiredOrFutureReceiptIsRemovedWithoutDroppingAttemptIdentity() {
+        val callback = installing()
+        assertTrue(controller.installerResult(callback.copy(status = 8), { true }, null))
+        assertEquals("INSTALLER_TIMEOUT", store.read()!!.lastAttempt!!.failure!!.code)
+        nowMillis -= 1
+        controller.state()
+        assertNull(store.read()!!.lastAttempt!!.failure)
+        assertEquals(callback.attemptId, store.read()!!.lastAttempt!!.id)
+        assertTrue(store.read()!!.lastAttempt!!.terminalCallbackSeen)
+        controller.cancel(callback.updateId)
+        val next = installing()
+        controller.installerResult(next, { true }, null)
+        nowMillis += 24L * 60 * 60 * 1000 + 1
+        controller.state()
+        assertNull(store.read()!!.lastAttempt!!.failure)
+        assertEquals(next.attemptId, store.read()!!.lastAttempt!!.id)
+    }
+
+    @Test
+    fun cleanupProtectsPreparedArtifactsAndRefusesUnknownMaintenance() {
+        val (manifest, signature) = signedRelease()
+        val id = updateId(controller.beginProductUpdate(manifest, signature))
+        val apk = File(cache, "0.1.0/droidbridge-0.1.0-arm64-v8a.apk")
+        assertTrue(apk.setLastModified(nowMillis - 25L * 60 * 60 * 1000))
+        val other = File(cache, "old.apk").apply { writeText("old"); setLastModified(nowMillis - 25L * 60 * 60 * 1000) }
+        controller.cleanupDownloads()
+        assertTrue(apk.exists())
+        assertFalse(other.exists())
+        assertNull(error(controller.installApk(id)))
+        File(base, UpdateMaintenanceStore.RECORD).writeText("invalid")
+        assertThrows(Exception::class.java) { controller.cleanupDownloads() }
+        assertTrue(apk.exists())
+    }
+
+    @Test
+    fun synchronousFailureReceiptSurvivesAbandonCallbackUntilExplicitRetry() {
+        val (manifest, signature) = signedRelease()
+        val id = updateId(controller.beginProductUpdate(manifest, signature))
+        installer.failWrite = true
+        val reply = UpdateMaintenanceReplies.mutation(controller.installApk(id))
+        assertEquals(MaintenanceReply.Refused("IO_ERROR", "apk_write_commit"), reply)
+        val failed = store.read()!!.lastAttempt!!
+        assertTrue(failed.terminalCallbackSeen)
+        assertEquals("IO_ERROR", failed.failure!!.code)
+        assertFalse(controller.installerResult(UpdateInstallerCallback(id, failed.id, failed.sessionId, 3), { true }, null))
+        installer.failWrite = false
+        assertNull(error(controller.installApk(id)))
+        assertNull(store.read()!!.lastAttempt!!.failure)
+        assertFalse(store.read()!!.lastAttempt!!.id == failed.id)
+    }
+
+    @Test
+    fun failedReceiptPersistenceStillAbandonsTheSessionAndCanRecover() {
+        var writes = 0
+        val fragile = UpdateMaintenanceStore(base, restrictToOwner = {
+            writes++
+            if (writes == 3) throw IOException("receipt unavailable")
+        }, syncDirectory = {})
+        val other = UpdateMaintenanceController(
+            "com.droidbridge.standalone", config, fragile, host, packages, installer, cache,
+        )
+        val (manifest, signature) = signedRelease()
+        val id = updateId(other.beginProductUpdate(manifest, signature))
+        installer.failWrite = true
+        assertEquals(
+            MaintenanceReply.Refused("IO_ERROR", "record_install_failure"),
+            UpdateMaintenanceReplies.mutation(other.installApk(id)),
+        )
+        assertTrue(installer.live.isEmpty())
+        assertFalse(host.admissionOpen)
+        other.recover()
+        assertEquals(MaintenancePhase.Prepared, fragile.read()!!.phase)
+        assertNull(fragile.read()!!.apkSessionId)
     }
 
     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

@@ -14,6 +14,7 @@
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="af.shizuku.plus.api" />
         <!-- Launchable apps, so an automation step can offer the app to open. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -106,6 +107,7 @@
 
         <receiver
             android:name=".runtimehost.PackageInstallerResultReceiver"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":runtime" />
     </application>
 </manifest>

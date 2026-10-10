@@ -90,6 +90,30 @@ class I6_GatesTest {
     }
 
     @Test
+    fun plusDiscoveryDoesNotGrantAuthorizationOrInferBinderOwnership() {
+        val absentHub = ShizukuCapabilityProjector.project(
+            ShizukuObservation(false, true, true, 2_000, false, plusInstalled = true),
+        )
+        assertEquals(ShizukuProviderState.CompatRequired, absentHub.providerState)
+        assertEquals("COMPAT_HUB_REQUIRED", absentHub.reason)
+        assertFalse(absentHub.exposesExecutor)
+        val noGrant = ShizukuCapabilityProjector.project(
+            ShizukuObservation(true, true, false, null, false, plusInstalled = true),
+        )
+        assertEquals("GRANT_MISSING", noGrant.reason)
+        assertFalse(noGrant.exposesExecutor)
+        val root = ShizukuCapabilityProjector.project(
+            ShizukuObservation(true, true, true, 0, false, plusInstalled = true),
+        )
+        assertEquals(ShizukuProviderState.IncompatibleIdentity, root.providerState)
+        assertFalse(root.exposesExecutor)
+        val quarantined = ShizukuCapabilityProjector.project(
+            ShizukuObservation(true, true, true, 2_000, false, cleanupQuarantined = true, plusInstalled = true),
+        )
+        assertFalse(quarantined.exposesExecutor)
+    }
+
+    @Test
     fun I6_G02_controllerOwnsSessionOrchestrationButNoToolPrimitives() {
         val methods = ShizukuController::class.java.declaredMethods.map { it.name }.toSet()
 

@@ -25,9 +25,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.droidbridge.ui.R
@@ -46,7 +45,10 @@ import com.droidbridge.ui.common.RefreshIndicator
 import com.droidbridge.ui.common.RouteError
 import com.droidbridge.ui.common.RouteLoading
 import com.droidbridge.ui.settings.BackButton
-import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,70 +59,103 @@ import kotlinx.coroutines.withContext
 
 data class UpdatesUiState(
     val maintenance: UpdateMaintenanceView? = null,
-    val maintenanceFailed: Boolean = false,
+    val readFailure: MaintenanceReply.Refused? = null,
     val busy: Boolean = false,
-    val actionFailed: Boolean = false,
+    val actionFailure: MaintenanceReply.Refused? = null,
 )
 
-/** Presents UpdateManager (default process) and the Runtime-owned maintenance record together. */
 class UpdatesViewModel(
     private val client: DroidBridgeClient,
     private val updates: UpdateManager,
-    private val cacheRoot: File,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(UpdatesUiState())
     val state: StateFlow<UpdatesUiState> = mutableState.asStateFlow()
     val updateState: StateFlow<UpdateState> = updates.state
+    private var refreshJob: Job? = null
+    private var maintenanceRevision = 0L
 
     fun refresh() {
-        viewModelScope.launch {
-            val view = runCatching { client.updateMaintenance() }.getOrNull()?.let(UpdateMaintenanceReplies::state)
-            mutableState.update { it.copy(maintenance = view ?: it.maintenance, maintenanceFailed = view == null) }
-            withContext(Dispatchers.IO) { updates.cleanup(referenced(view?.record)) }
+        if (mutableState.value.busy) return
+        maintenanceRevision++
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch { refreshState() }
+    }
+
+    private suspend fun refreshState() {
+        val revision = maintenanceRevision
+        val reply = try {
+            client.updateMaintenance()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            if (revision != maintenanceRevision || mutableState.value.busy) return
+            mutableState.update { it.copy(readFailure = MaintenanceReply.Refused("COMMUNICATION_FAILED", "read_maintenance")) }
+            return
+        }
+        if (revision != maintenanceRevision || mutableState.value.busy) return
+        val view = UpdateMaintenanceReplies.state(reply)
+        mutableState.update { previous ->
+            val completed = previous.maintenance?.record != null && view != null && view.record == null
+            previous.copy(
+                maintenance = view ?: previous.maintenance,
+                readFailure = if (view == null) UpdateMaintenanceReplies.mutation(reply) as? MaintenanceReply.Refused else null,
+                actionFailure = if (completed) null else previous.actionFailure,
+            )
+        }
+        if (view != null) withContext(Dispatchers.IO) { updates.refreshDownloads() }
+    }
+
+    /** Poll only a visible installation; callbacks and package changes remain authoritative. */
+    fun monitorInstallation(): Job = viewModelScope.launch {
+        while (isActive) {
+            delay(1_000)
+            if (!mutableState.value.busy && mutableState.value.maintenance?.record?.phase == "apk_installing") {
+                refreshJob?.join()
+                refreshState()
+            }
         }
     }
 
-    fun check() {
-        viewModelScope.launch { updates.check() }
+    fun check() { viewModelScope.launch { updates.check() } }
+    fun download() { viewModelScope.launch { updates.download() } }
+
+    fun installApk() = mutate("install_request") {
+        val record = mutableState.value.maintenance?.record
+        if (record != null) return@mutate UpdateMaintenanceReplies.mutation(client.installUpdateApk(record.updateId))
+        val checked = updates.state.value.check as? UpdateCheck.Checked
+            ?: return@mutate MaintenanceReply.Refused("INVALID_ARGUMENT", "verify_manifest")
+        when (val begun = UpdateMaintenanceReplies.mutation(client.beginProductUpdate(checked.manifest, checked.signature))) {
+            is MaintenanceReply.Refused -> begun
+            is MaintenanceReply.Recorded -> begun.record?.let {
+                UpdateMaintenanceReplies.mutation(client.installUpdateApk(it.updateId))
+            } ?: MaintenanceReply.Refused("RESPONSE_INVALID", "response_decode")
+        }
     }
 
-    fun download() {
-        viewModelScope.launch { updates.download() }
+    fun cancel(record: MaintenanceRecordView) = mutate("cancel_request") {
+        UpdateMaintenanceReplies.mutation(client.cancelUpdate(record.updateId))
     }
 
-    /** Enters product-update maintenance when needed, then makes one explicit PackageInstaller attempt. */
-    fun installApk() = mutate {
-        val record = mutableState.value.maintenance?.record ?: begin() ?: return@mutate FAILED
-        client.installUpdateApk(record.updateId)
+    fun localFailure(code: String, stage: String) {
+        mutableState.update { it.copy(actionFailure = MaintenanceReply.Refused(code, stage)) }
     }
 
-    fun cancel(record: MaintenanceRecordView) = mutate { client.cancelUpdate(record.updateId) }
-
-    private suspend fun begin(): MaintenanceRecordView? {
-        val checked = updates.state.value.check as? UpdateCheck.Checked ?: return null
-        val reply = client.beginProductUpdate(checked.manifest, checked.signature)
-        return (UpdateMaintenanceReplies.mutation(reply) as? MaintenanceReply.Recorded)?.record
-    }
-
-    /** Runs one maintenance action; any refusal or local failure shows the common error state. */
-    private fun mutate(action: suspend () -> String) {
+    private fun mutate(stage: String, action: suspend () -> MaintenanceReply) {
         if (mutableState.value.busy) return
-        mutableState.update { it.copy(busy = true, actionFailed = false) }
+        maintenanceRevision++
+        refreshJob?.cancel()
+        mutableState.update { it.copy(busy = true, actionFailure = null) }
         viewModelScope.launch {
-            val reply = runCatching { action() }.getOrElse { FAILED }
-            val refused = UpdateMaintenanceReplies.mutation(reply) is MaintenanceReply.Refused
-            mutableState.update { it.copy(busy = false, actionFailed = refused) }
+            val reply = try {
+                action()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                MaintenanceReply.Refused("COMMUNICATION_FAILED", stage)
+            }
+            mutableState.update { it.copy(busy = false, actionFailure = reply as? MaintenanceReply.Refused) }
             refresh()
         }
-    }
-
-    private fun referenced(record: MaintenanceRecordView?): Set<File> {
-        record ?: return emptySet()
-        return setOf(File(File(cacheRoot, record.targetVersion), "droidbridge-${record.targetVersion}-arm64-v8a.apk"))
-    }
-
-    private companion object {
-        const val FAILED = """{"schema_version":1,"error":"IO_ERROR"}"""
     }
 }
 
@@ -130,14 +165,24 @@ fun UpdatesRoute(viewModel: UpdatesViewModel, apkVersion: String, back: () -> Un
     val state by viewModel.state.collectAsStateWithLifecycle()
     val updates by viewModel.updateState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
+    LifecycleResumeEffect(viewModel) {
+        viewModel.refresh()
+        val monitoring = viewModel.monitorInstallation()
+        onPauseOrDispose { monitoring.cancel() }
+    }
     val maintenance = state.maintenance
     val record = maintenance?.record
     val installApk = {
-        if (context.packageManager.canRequestPackageInstalls()) {
-            viewModel.installApk()
-        } else {
-            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
+        try {
+            if (context.packageManager.canRequestPackageInstalls()) {
+                viewModel.installApk()
+            } else {
+                context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.packageName)))
+            }
+        } catch (_: android.content.ActivityNotFoundException) {
+            viewModel.localFailure("ACTIVITY_NOT_FOUND", "install_permission")
+        } catch (_: SecurityException) {
+            viewModel.localFailure("PERMISSION_DENIED", "install_permission")
         }
     }
     Scaffold(
@@ -166,7 +211,10 @@ fun UpdatesRoute(viewModel: UpdatesViewModel, apkVersion: String, back: () -> Un
                     modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(min = 56.dp).testTag("updates:check"),
                 ) { Text(stringResource(AppR.string.action_check_for_updates)) }
             }
-            if (state.actionFailed || updates.downloadFailed || state.maintenanceFailed) {
+            val failure = state.actionFailure ?: state.readFailure ?: record?.installFailure
+            if (failure != null) {
+                item { UpdateFailure(failure) }
+            } else if (updates.downloadFailed) {
                 item { RouteError("updates:action", retry = null) }
             }
             if (record != null) {
@@ -219,6 +267,11 @@ private fun LazyListScope.maintenanceActions(
         item { Action(AppR.string.updates_install_apk, "install_apk", !busy, installApk) }
     } else {
         item { RouteLoading("updates:installing") }
+        if (record.awaitingConfirmation && record.installFailure == null) {
+            item {
+                Text(stringResource(AppR.string.updates_awaiting_confirmation), Modifier.padding(16.dp).testTag("updates:awaiting_confirmation"))
+            }
+        }
     }
     if (record.phase == "prepared" || record.phase == "apk_installing") {
         item {
@@ -250,3 +303,38 @@ private fun Action(@StringRes text: Int, tag: String, enabled: Boolean, onClick:
     ) { Text(stringResource(text)) }
 }
 
+@Composable
+private fun UpdateFailure(failure: MaintenanceReply.Refused) {
+    val reason = when (failure.code) {
+        "HOST_TRANSITION_PENDING" -> AppR.string.updates_error_busy
+        "CAPABILITY_UNAVAILABLE", "RUNTIME_UNAVAILABLE" -> AppR.string.updates_error_runtime
+        "PERMISSION_DENIED", "INSTALLER_BLOCKED" -> AppR.string.updates_error_permission
+        "INSTALLER_ABORTED" -> AppR.string.updates_error_aborted
+        "INSTALLER_STORAGE" -> AppR.string.updates_error_storage
+        "INSTALLER_INVALID_APK", "INSTALLER_INCOMPATIBLE", "INSTALLER_CONFLICT" -> AppR.string.updates_error_apk
+        "INVALID_ARGUMENT" -> if (failure.stage in setOf("verify_manifest", "verify_apk", "validate_install", "apk_write")) AppR.string.updates_error_apk else AppR.string.updates_error_generic
+        "STALE_AUTHORITY" -> AppR.string.updates_error_stale
+        "COMMUNICATION_FAILED" -> AppR.string.updates_error_connection
+        "CONFIRMATION_MISSING", "ACTIVITY_NOT_FOUND", "CALLBACK_TIMEOUT" -> AppR.string.updates_error_confirmation
+        "INSTALLER_RESULT_MISSING", "INSTALLER_STATUS_MISSING", "INSTALLER_STATUS_UNKNOWN" -> AppR.string.updates_error_result_missing
+        else -> AppR.string.updates_error_generic
+    }
+    val stage = when (failure.stage) {
+        "release_configuration", "verify_manifest", "verify_apk", "validate_install" -> AppR.string.updates_stage_verify
+        "activate_apk_host", "close_admission", "enter_maintenance", "record_maintenance" -> AppR.string.updates_stage_prepare
+        "create_session", "record_session", "apk_write", "apk_write_commit", "installer_commit" -> AppR.string.updates_stage_install
+        "installer_confirmation", "install_permission" -> AppR.string.updates_stage_confirmation
+        "installer_result" -> AppR.string.updates_stage_result
+        "validate_cancel", "abandon_session", "delete_maintenance", "reopen_admission" -> AppR.string.updates_stage_cancel
+        "read_maintenance", "recover_maintenance", "cleanup_downloads" -> AppR.string.updates_stage_refresh
+        else -> AppR.string.updates_stage_request
+    }
+    ListItem(
+        headlineContent = { Text(stringResource(reason)) },
+        supportingContent = {
+            Text(stringResource(AppR.string.updates_error_details, stringResource(stage) + (failure.stage?.let { " (" + it + ")" } ?: ""), failure.code))
+        },
+        leadingContent = { RowIcon(R.drawable.ic_info) },
+        modifier = Modifier.testTag("updates:action_error"),
+    )
+}

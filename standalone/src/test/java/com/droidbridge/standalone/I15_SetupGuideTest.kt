@@ -89,6 +89,17 @@ class I15_SetupGuideTest {
     }
 
     @Test
+    fun missingCompatHubOpensSetupInsteadOfReportingNoManager() {
+        val rows = CapabilityRows.project(snapshot(mapOf(
+            "shizuku.shell" to AvailabilityFact(AvailabilityState.Unavailable, "COMPAT_HUB_REQUIRED"),
+        )), notificationListenerGranted = true)
+        val row = rows.single { it.key == CapabilityRowKey.Shizuku }
+        assertEquals(CapabilityRowState.CompatRequired, row.state)
+        assertEquals(CapabilityAction.OpenShizuku, row.action)
+        assertTrue(row.state !in settledCapabilityStates)
+    }
+
+    @Test
     fun a_stopped_shizuku_offers_to_open_it() {
         val plain = CapabilityRows.project(snapshot(), notificationListenerGranted = true).single { it.key == CapabilityRowKey.Shizuku }
         assertEquals(CapabilityAction.OpenShizuku, plain.action)

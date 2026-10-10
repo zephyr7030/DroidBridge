@@ -389,4 +389,5 @@
     <string name="capabilities_all_set">全部就绪</string>
     <string name="nav_home">首页</string>
     <string name="settings_data_summary_runtime">凭据与运行数据</string>
+    <string name="shizuku_state_compat_required">需要配置 Compat Hub</string>
 </resources>

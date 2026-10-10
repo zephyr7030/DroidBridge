@@ -65,6 +65,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.droidbridge.standalone.execution.shizuku.ShizukuManagers
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -515,7 +518,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
             }
             entry<Updates> {
                 UpdatesRoute(
-                    viewModel = viewModel { UpdatesViewModel(graph.client, graph.updates, graph.updateCache) },
+                    viewModel = viewModel { UpdatesViewModel(graph.client, graph.updates) },
                     apkVersion = graph.apkVersionName,
                 ) { backStack.removeLastOrNull() }
             }
@@ -743,6 +746,12 @@ private fun CapabilitiesScreen(
                     refreshing = row.key == CapabilityRowKey.Runtime && available?.refreshing == true,
                     emphasized = row.key == next,
                 ) { row.action?.let { actionHandler(row.key, it) } }
+                if (row.key == CapabilityRowKey.Shizuku && ShizukuManagers.plusInstalled(LocalContext.current)) {
+                    TextButton(
+                        onClick = { actionHandler(row.key, CapabilityAction.OpenShizuku) },
+                        modifier = Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp).testTag("setup:shizuku:help"),
+                    ) { Text(stringResource(AppR.string.shizuku_plus_help)) }
+                }
                 if (index != access.lastIndex) HorizontalDivider()
             }
             if (background.isNotEmpty()) {
@@ -768,7 +777,7 @@ private fun CapabilitySection(@StringRes title: Int) {
     )
 }
 
-private enum class SetupDialog { RestrictedSettings, AutostartConfirm, RecentsLock }
+private enum class SetupDialog { RestrictedSettings, AutostartConfirm, RecentsLock, ShizukuHelp }
 
 @Composable
 private fun rememberCapabilityActionHandler(
@@ -790,6 +799,8 @@ private fun rememberCapabilityActionHandler(
         capture.launch(captureManager.createScreenCaptureIntent())
     }
     val localNetwork = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.recheckRuntime() }
+    val scope = rememberCoroutineScope()
+    var shizukuOpenFailed by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<SetupDialog?>(null) }
     // Android cannot report the vendor autostart switch, so returning from that page asks the user.
     var awaitingAutostart by remember { mutableStateOf(false) }
@@ -800,6 +811,38 @@ private fun rememberCapabilityActionHandler(
         }
     }
     when (dialog) {
+        SetupDialog.ShizukuHelp -> AlertDialog(
+            onDismissRequest = { dialog = null },
+            title = { Text(stringResource(AppR.string.shizuku_setup_title)) },
+            text = {
+                Column {
+                    Text(stringResource(
+                        if (ShizukuManagers.plusInstalled(context)) AppR.string.shizuku_plus_setup_body
+                        else AppR.string.shizuku_authorization_help,
+                    ))
+                    if (shizukuOpenFailed) Text(stringResource(AppR.string.shizuku_open_failed))
+                }
+            },
+            confirmButton = {
+                Column {
+                    ShizukuManagers.launchers(context).forEach { (name, intent) ->
+                        TextButton(onClick = {
+                            try {
+                                context.startActivity(intent)
+                                dialog = null
+                            } catch (_: android.content.ActivityNotFoundException) {
+                                shizukuOpenFailed = true
+                            } catch (_: SecurityException) {
+                                shizukuOpenFailed = true
+                            }
+                        }) {
+                            Text(stringResource(if (name == ShizukuManagers.PLUS_PACKAGE) AppR.string.shizuku_open_plus else AppR.string.shizuku_open_legacy))
+                        }
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { dialog = null }) { Text(stringResource(R.string.action_cancel)) } },
+        )
         SetupDialog.RestrictedSettings -> AlertDialog(
             onDismissRequest = { dialog = null },
             title = { Text(stringResource(AppR.string.restricted_settings_title)) },
@@ -846,10 +889,31 @@ private fun rememberCapabilityActionHandler(
     return { row, action ->
         when (action) {
             CapabilityAction.Retry, CapabilityAction.Recheck -> viewModel.recheckRuntime()
-            CapabilityAction.Authorize -> viewModel.requestShizukuAuthorization()
+            CapabilityAction.Authorize -> scope.launch {
+                if (!viewModel.requestShizukuAuthorization()) {
+                    shizukuOpenFailed = false
+                    dialog = SetupDialog.ShizukuHelp
+                }
+            }
             CapabilityAction.Diagnostics -> navigate(Diagnostics)
             CapabilityAction.InstallShizuku -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")))
-            CapabilityAction.OpenShizuku -> context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")?.let(context::startActivity)
+            CapabilityAction.OpenShizuku -> {
+                val launchers = ShizukuManagers.launchers(context)
+                if (!ShizukuManagers.plusInstalled(context) && launchers.size == 1) {
+                    try {
+                        context.startActivity(launchers.single().second)
+                    } catch (_: android.content.ActivityNotFoundException) {
+                        shizukuOpenFailed = true
+                        dialog = SetupDialog.ShizukuHelp
+                    } catch (_: SecurityException) {
+                        shizukuOpenFailed = true
+                        dialog = SetupDialog.ShizukuHelp
+                    }
+                } else {
+                    shizukuOpenFailed = launchers.isEmpty()
+                    dialog = SetupDialog.ShizukuHelp
+                }
+            }
             CapabilityAction.Allow -> {
                 if (row == CapabilityRowKey.LocalNetwork) {
                     if (Build.VERSION.SDK_INT >= 37) localNetwork.launch(localNetworkPermission())

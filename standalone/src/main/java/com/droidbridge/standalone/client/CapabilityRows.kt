@@ -117,6 +117,7 @@ object CapabilityRows {
         val fact = snapshot.grant("shizuku.shell")
         return when {
             fact.state == AvailabilityState.Available -> CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.Connected)
+            fact.reason == "COMPAT_HUB_REQUIRED" -> CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.CompatRequired, CapabilityAction.OpenShizuku)
             fact.reason == "MANAGER_NOT_INSTALLED" -> CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.NotInstalled, CapabilityAction.InstallShizuku)
             fact.reason == "BINDER_UNAVAILABLE" -> CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.NotRunning, CapabilityAction.OpenShizuku)
             fact.reason == "GRANT_MISSING" -> CapabilityRow(CapabilityRowKey.Shizuku, CapabilityRowState.NotAuthorized, CapabilityAction.Authorize)

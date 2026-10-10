@@ -51,10 +51,7 @@ class AppGraph(application: Application) {
         ),
         installedVersionCode = application.packageManager.getPackageInfo(application.packageName, 0).longVersionCode,
         cacheRoot = updateCache,
-    ).also { manager ->
-        // S-UPD-001 cold-start cleanup: no installer or export flow is live before the UI binds.
-        Thread({ manager.cleanup(emptySet()) }, "droidbridge-update-cleanup").start()
-    }
+    )
 
     /** The default-process S-SEC-005 export path shared by Diagnostics and MaintenanceRecovery. */
     val diagnosticsExporter: DiagnosticsExporter by lazy {

@@ -94,6 +94,7 @@ fun CapabilityListItem(
         CapabilityRowKey.Shizuku -> R.string.shizuku_state_not_installed
         else -> R.string.state_not_installed
     }
+    CapabilityRowState.CompatRequired -> R.string.shizuku_state_compat_required
     CapabilityRowState.UpdateRequired -> R.string.state_update_required
     CapabilityRowState.NotRunning -> R.string.shizuku_state_not_running
     CapabilityRowState.NotAuthorized -> R.string.shizuku_state_not_authorized

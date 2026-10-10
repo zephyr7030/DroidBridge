@@ -45,10 +45,12 @@ internal data class ShizukuObservation(
     val connecting: Boolean,
     val userServiceFailed: Boolean = false,
     val cleanupQuarantined: Boolean = false,
+    val plusInstalled: Boolean = false,
 )
 
 internal enum class ShizukuProviderState {
     NotInstalled,
+    CompatRequired,
     NotRunning,
     NotAuthorized,
     Connecting,
@@ -66,6 +68,7 @@ internal data class ShizukuCapabilityProjection(
 internal object ShizukuCapabilityProjector {
     fun project(observation: ShizukuObservation): ShizukuCapabilityProjection {
         val providerState = when {
+            !observation.managerInstalled && observation.plusInstalled -> ShizukuProviderState.CompatRequired
             !observation.managerInstalled -> ShizukuProviderState.NotInstalled
             !observation.binderAlive -> ShizukuProviderState.NotRunning
             !observation.authorized -> ShizukuProviderState.NotAuthorized
@@ -81,6 +84,7 @@ internal object ShizukuCapabilityProjector {
         }
         val reason = when (providerState) {
             ShizukuProviderState.NotInstalled -> "MANAGER_NOT_INSTALLED"
+            ShizukuProviderState.CompatRequired -> "COMPAT_HUB_REQUIRED"
             ShizukuProviderState.NotRunning -> "BINDER_UNAVAILABLE"
             ShizukuProviderState.NotAuthorized -> "GRANT_MISSING"
             ShizukuProviderState.Connecting -> "CONNECTING"

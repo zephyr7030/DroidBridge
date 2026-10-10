@@ -15,6 +15,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import com.droidbridge.standalone.client.BackgroundFacts
 import java.io.File
+import com.droidbridge.standalone.execution.shizuku.ShizukuManagers
 
 /**
  * Reads the device facts the setup guide needs and opens the settings pages it points to. Every
@@ -36,7 +37,7 @@ object DeviceSetup {
         context.getSystemService(NotificationManager::class.java).isNotificationListenerAccessGranted(listener)
 
     /** The Shizuku app is installed; whether it runs and authorizes this App is a Runtime fact. */
-    fun shizukuInstalled(context: Context): Boolean = installed(context, SHIZUKU_MANAGER)
+    fun shizukuInstalled(context: Context): Boolean = ShizukuManagers.anyInstalled(context)
 
     /** Installed from a file or browser rather than a store, so Android restricts its accessibility switch. */
     fun restrictedSettingsApply(context: Context): Boolean = Build.VERSION.SDK_INT >= 33 && runCatching {
@@ -94,10 +95,6 @@ object DeviceSetup {
 
     private fun packageUri(context: Context): Uri = Uri.parse("package:${context.packageName}")
 
-    private fun installed(context: Context, packageName: String): Boolean = runCatching {
-        context.packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
-    }.isSuccess
-
     private fun recentSystemKill(context: Context): Boolean {
         val since = System.currentTimeMillis() - SYSTEM_KILL_WINDOW_MILLIS
         return runCatching {
@@ -126,7 +123,6 @@ object DeviceSetup {
         REASON_FREEZER,
     )
 
-    private const val SHIZUKU_MANAGER = "moe.shizuku.privileged.api"
 
     /** Known autostart managers, after the list the AutoStarter project maintains; order is preference. */
     private val VENDOR_AUTOSTART: Map<List<String>, List<String>> = mapOf(

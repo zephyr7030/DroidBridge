@@ -5,6 +5,7 @@ import com.droidbridge.standalone.product.release.ReleaseConfig
 import com.droidbridge.standalone.product.update.ReleaseTransport
 import com.droidbridge.standalone.product.update.UpdateCheck
 import com.droidbridge.standalone.product.update.UpdateManager
+import com.droidbridge.standalone.product.update.cleanupUpdateCache
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
@@ -96,7 +97,7 @@ class I12_UpdateManagerTest {
         val part = File(cache, "0.1.0/.x.part").apply { writeText("part"); setLastModified(now - 25L * 60 * 60 * 1000) }
         val referenced = File(cache, "0.1.0/keep.zip").apply { writeText("keep"); setLastModified(now - 48L * 60 * 60 * 1000) }
         val fresh = File(cache, "0.1.0/fresh.apk").apply { writeText("fresh"); setLastModified(now - 60_000) }
-        UpdateManager(config, 999, cache, FakeTransport(emptyMap(), fixture), clock = { now }).cleanup(setOf(referenced))
+        cleanupUpdateCache(cache, setOf(referenced), now)
         assertFalse(old.exists())
         assertFalse(part.exists())
         assertTrue(referenced.exists())

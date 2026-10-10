@@ -274,11 +274,23 @@ internal class RuntimeHostController(
     }
 
     /** Reconciles against current package/session observations before reporting, e.g. after a dismissed installer. */
-    fun updateMaintenanceState(): String = onMaintenanceExecutor {
-        runCatching { maintenance.recover() }
-            .onFailure { NativeRuntime.nativeRecordHostFault(ErrorToken.IoError.wire, "update_maintenance_recover") }
-        maintenance.state()
+    fun updateMaintenanceState(): String = onMaintenanceExecutor { maintenance.refresh() }
+
+    fun enqueueInstallerResult(
+        callback: UpdateInstallerCallback,
+        canHandle: () -> Boolean,
+        confirmation: (() -> Unit)?,
+        finished: () -> Unit,
+    ): java.util.concurrent.Future<*> = executor().submit {
+        try {
+            maintenance.installerResult(callback, canHandle, confirmation)
+        } catch (_: Exception) {
+            NativeRuntime.nativeRecordHostFault(ErrorToken.IoError.wire, "update_installer_result")
+        } finally {
+            finished()
+        }
     }
+
 
     fun beginProductUpdate(manifest: ByteArray, signature: ByteArray): String =
         onMaintenanceExecutor { maintenance.beginProductUpdate(manifest, signature) }

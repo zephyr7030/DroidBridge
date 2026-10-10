@@ -4,20 +4,50 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.SystemClock
+import android.util.Log
+import com.droidbridge.standalone.DroidBridgeApplication
+import java.util.concurrent.ScheduledThreadPoolExecutor
 
-/**
- * Receives only this App's request-scoped self-update session status. It launches the platform
- * confirmation when the installer asks for it; the outcome itself is observed later from the
- * installed package and session state, never from this callback (S-UPD-002).
- */
+/** Results share the Runtime writer; package facts remain the sole proof of installation. */
 class PackageInstallerResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE) !=
-            PackageInstaller.STATUS_PENDING_USER_ACTION
-        ) {
-            return
-        }
-        val confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java) ?: return
-        context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val data = intent.data ?: return
+        if (data.scheme != "droidbridge-update" || data.authority != "install" ||
+            data.pathSegments.size != 2 || !intent.hasExtra(PackageInstaller.EXTRA_SESSION_ID)
+        ) return
+        val callback = UpdateInstallerCallback(
+            data.pathSegments[0], data.pathSegments[1],
+            intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1),
+            if (intent.hasExtra(PackageInstaller.EXTRA_STATUS)) intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE) else null,
+        )
+        val confirmation = if (callback.status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            runCatching { intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java) }.getOrNull()
+        } else null
+        val pending = goAsync()
+        DELIVERY.submit(
+            enqueue = { canHandle, finished ->
+                val host = (context.applicationContext as DroidBridgeApplication).requireRuntimeGraph().hostController
+                host.enqueueInstallerResult(
+                    callback, canHandle,
+                    confirmation?.let { activity ->
+                        { context.startActivity(activity.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    },
+                    finished,
+                )
+            },
+            finish = pending::finish,
+            failure = { Log.w(TAG, it) },
+        )
+    }
+
+    private companion object {
+        val DELIVERY = InstallerResultDelivery(
+            ScheduledThreadPoolExecutor(1) { work ->
+                Thread(work, "droidbridge-update-deadline").apply { isDaemon = true }
+            }.apply { removeOnCancelPolicy = true },
+            SystemClock::elapsedRealtime,
+        )
+        const val TAG = "DroidBridgeUpdate"
     }
 }

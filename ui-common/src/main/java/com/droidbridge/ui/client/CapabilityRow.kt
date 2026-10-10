@@ -21,6 +21,7 @@ enum class CapabilityRowState {
     Starting,
     Unavailable,
     NotInstalled,
+    CompatRequired,
     UpdateRequired,
     NotRunning,
     NotAuthorized,

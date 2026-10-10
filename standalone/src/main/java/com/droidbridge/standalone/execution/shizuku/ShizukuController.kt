@@ -586,14 +586,10 @@ internal class ShizukuController(
         userServiceUid = session?.let { SHELL_UID } ?: incompatibleUid,
         connecting = connecting,
         cleanupQuarantined = cleanupQuarantined,
+        plusInstalled = ShizukuManagers.plusInstalled(application),
     )
 
-    private fun managerInstalled(): Boolean = runCatching {
-        application.packageManager.getApplicationInfo(
-            MANAGER_PACKAGE,
-            PackageManager.ApplicationInfoFlags.of(0),
-        )
-    }.isSuccess
+    private fun managerInstalled(): Boolean = ShizukuManagers.legacyInstalled(application)
 
     private fun binderAlive(): Boolean = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
 
@@ -615,7 +611,6 @@ internal class ShizukuController(
     }
 
     companion object {
-        private const val MANAGER_PACKAGE = "moe.shizuku.privileged.api"
         private const val PERMISSION_REQUEST_CODE = 7_041
         private const val USER_SERVICE_TAG = "droidbridge-shizuku-v1"
         private const val USER_SERVICE_VERSION = BuildConfig.VERSION_CODE

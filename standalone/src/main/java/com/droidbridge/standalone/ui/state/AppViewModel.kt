@@ -67,7 +67,7 @@ class AppViewModel(
 
     fun startRuntime() = client.bind()
     fun recheckRuntime() = client.recheck()
-    fun requestShizukuAuthorization() = client.requestShizukuAuthorization()
+    suspend fun requestShizukuAuthorization() = client.requestShizukuAuthorization()
     fun deliverMediaProjectionConsent(resultCode: Int, resultData: Intent) =
         client.deliverMediaProjectionConsent(resultCode, resultData)
     fun stopMediaProjection() = client.stopMediaProjection()

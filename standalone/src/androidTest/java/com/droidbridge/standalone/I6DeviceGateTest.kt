@@ -82,6 +82,7 @@ class I6DeviceGateTest {
                 assertTrue(
                     shizuku.getString("reason") in setOf(
                         "MANAGER_NOT_INSTALLED",
+                        "COMPAT_HUB_REQUIRED",
                         "BINDER_UNAVAILABLE",
                         "GRANT_MISSING",
                         "INCOMPATIBLE_IDENTITY",

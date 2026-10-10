@@ -1,5 +1,7 @@
 package com.droidbridge.standalone.runtimehost
 
+import com.droidbridge.standalone.product.update.validUpdateCode
+import com.droidbridge.standalone.product.update.validUpdateStage
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.channels.FileChannel
@@ -12,6 +14,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
@@ -20,7 +24,58 @@ internal enum class MaintenancePhase(val wire: String) {
     ApkInstalling("apk_installing"),
 }
 
-/** The exact S-UPD-002 `update-maintenance.json` record; [validate] enforces every cross-field rule. */
+internal data class UpdateInstallFailure(val code: String, val stage: String, val atMillis: Long) {
+    fun validate() {
+        require(validUpdateCode(code) && validUpdateStage(stage) && atMillis >= 0)
+    }
+}
+
+internal data class UpdateInstallAttempt(
+    val id: String,
+    val sessionId: Int,
+    val terminalCallbackSeen: Boolean = false,
+    val confirmationHandled: Boolean = false,
+    val failure: UpdateInstallFailure? = null,
+) {
+    fun validate() {
+        require(UUID.fromString(id).version() == 4 && UUID.fromString(id).variant() == 2 && UUID.fromString(id).toString() == id && sessionId >= 0)
+        failure?.validate()
+    }
+
+    fun encode() = buildJsonObject {
+        put("attempt_id", id)
+        put("session_id", sessionId)
+        put("terminal_callback_seen", terminalCallbackSeen)
+        put("confirmation_handled", confirmationHandled)
+        put("failure", failure?.let { value ->
+            buildJsonObject {
+                put("code", value.code)
+                put("stage", value.stage)
+                put("at_ms", value.atMillis)
+            }
+        } ?: JsonNull)
+    }
+
+    companion object {
+        fun decode(value: JsonObject): UpdateInstallAttempt {
+            require(value.keys == setOf("attempt_id", "session_id", "terminal_callback_seen", "confirmation_handled", "failure"))
+            val failure = value.getValue("failure").takeUnless { it == JsonNull }?.jsonObject?.let {
+                require(it.keys == setOf("code", "stage", "at_ms"))
+                UpdateInstallFailure(it.string("code")!!, it.string("stage")!!, it.long("at_ms")!!)
+            }
+            val session = value.long("session_id")!!
+            require(session in 0..Int.MAX_VALUE.toLong())
+            return UpdateInstallAttempt(
+                value.string("attempt_id")!!, session.toInt(),
+                requireNotNull((value["terminal_callback_seen"] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull),
+                requireNotNull((value["confirmation_handled"] as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull),
+                failure,
+            ).also { it.validate() }
+        }
+    }
+}
+
+/** The canonical maintenance record, including the last attempt after its active session ends. */
 internal data class UpdateMaintenanceRecord(
     val updateId: String,
     val targetVersion: String,
@@ -30,18 +85,21 @@ internal data class UpdateMaintenanceRecord(
     val targetApkSignerSha256: String,
     val phase: MaintenancePhase,
     val apkSessionId: Int?,
+    val lastAttempt: UpdateInstallAttempt? = null,
 ) {
     fun validate(): UpdateMaintenanceRecord {
         require(UUID_V4.matches(updateId))
         require(SEMVER.matches(targetVersion) && targetVersionCode > 0)
         require(HEX64.matches(targetApkSignerSha256))
         require(HEX64.matches(targetApkSha256) && targetApkSize > 0)
-        require(apkSessionId == null || phase == MaintenancePhase.ApkInstalling)
+        require(apkSessionId == null || (apkSessionId >= 0 && phase == MaintenancePhase.ApkInstalling))
+        lastAttempt?.validate()
+        require(lastAttempt == null || apkSessionId == null || lastAttempt.sessionId == apkSessionId)
         return this
     }
 
     fun encode(): String = buildJsonObject {
-        put("schema_version", 1)
+        put("schema_version", 2)
         put("update_id", updateId)
         put("target_version", targetVersion)
         put("target_version_code", targetVersionCode)
@@ -50,6 +108,7 @@ internal data class UpdateMaintenanceRecord(
         put("target_apk_signer_sha256", targetApkSignerSha256)
         put("phase", phase.wire)
         put("apk_session_id", apkSessionId)
+        put("last_attempt", lastAttempt?.encode() ?: JsonNull)
     }.toString()
 
     companion object {
@@ -65,7 +124,11 @@ internal data class UpdateMaintenanceRecord(
 
         fun decode(text: String): UpdateMaintenanceRecord {
             val value = Json.parseToJsonElement(text) as JsonObject
-            require(value.keys == KEYS && value.long("schema_version") == 1L)
+            val schema = value.long("schema_version")
+            require(
+                (schema == 1L && value.keys == KEYS) ||
+                    (schema == 2L && value.keys == KEYS + "last_attempt"),
+            )
             return UpdateMaintenanceRecord(
                 updateId = value.string("update_id")!!,
                 targetVersion = value.string("target_version")!!,
@@ -75,23 +138,14 @@ internal data class UpdateMaintenanceRecord(
                 targetApkSignerSha256 = value.string("target_apk_signer_sha256")!!,
                 phase = MaintenancePhase.entries.single { it.wire == value.string("phase") },
                 apkSessionId = value.long("apk_session_id")?.let { id ->
-                    require(id in Int.MIN_VALUE..Int.MAX_VALUE)
+                    require(id in 0..Int.MAX_VALUE.toLong())
                     id.toInt()
                 },
+                lastAttempt = if (schema == 2L) value.getValue("last_attempt")
+                    .takeUnless { it == JsonNull }?.jsonObject?.let(UpdateInstallAttempt::decode) else null,
             ).validate()
         }
 
-        private fun JsonObject.string(key: String): String? = when (val value = getValue(key)) {
-            JsonNull -> null
-            is JsonPrimitive -> value.also { require(it.isString) }.content
-            else -> error("$key is not a string")
-        }
-
-        private fun JsonObject.long(key: String): Long? = when (val value = getValue(key)) {
-            JsonNull -> null
-            is JsonPrimitive -> requireNotNull(value.takeUnless { it.isString }?.longOrNull)
-            else -> error("$key is not an integer")
-        }
     }
 }
 
@@ -111,25 +165,28 @@ internal class UpdateMaintenanceStore(
 
     /** Creates the record only when none exists. */
     fun create(next: UpdateMaintenanceRecord) = locked {
-        check(current() == null) { "an update maintenance record already exists" }
+        if (current() != null) throw MaintenanceStoreConflict()
         write(record, next.validate().encode())
     }
 
     /** Replaces exactly [expected]; a changed record refuses the mutation. */
     fun replace(expected: UpdateMaintenanceRecord, next: UpdateMaintenanceRecord) = locked {
-        check(current() == expected) { "update maintenance record changed" }
+        if (current() != expected) throw MaintenanceStoreConflict()
         check(next.updateId == expected.updateId)
         write(record, next.validate().encode())
     }
 
     fun delete(expected: UpdateMaintenanceRecord) = locked {
-        check(current() == expected) { "update maintenance record changed" }
+        if (current() != expected) throw MaintenanceStoreConflict()
         Files.delete(record.toPath())
         syncDirectory(base)
     }
 
-    private fun current(): UpdateMaintenanceRecord? =
-        if (record.exists()) UpdateMaintenanceRecord.decode(record.readText()) else null
+    private fun current(): UpdateMaintenanceRecord? {
+        if (!record.exists()) return null
+        require(record.length() <= 16 * 1024) { "update maintenance record exceeds its bound" }
+        return UpdateMaintenanceRecord.decode(record.readText())
+    }
 
     private fun write(target: File, text: String) {
         val temp = File(base, ".${target.name}.${UUID.randomUUID()}.tmp")
@@ -166,3 +223,17 @@ internal class UpdateMaintenanceStore(
         )
     }
 }
+
+private fun JsonObject.string(key: String): String? = when (val value = getValue(key)) {
+    JsonNull -> null
+    is JsonPrimitive -> value.also { require(it.isString) }.content
+    else -> error("$key is not a string")
+}
+
+private fun JsonObject.long(key: String): Long? = when (val value = getValue(key)) {
+    JsonNull -> null
+    is JsonPrimitive -> requireNotNull(value.takeUnless { it.isString }?.longOrNull)
+    else -> error("$key is not an integer")
+}
+
+internal class MaintenanceStoreConflict : IllegalStateException("update maintenance record changed")

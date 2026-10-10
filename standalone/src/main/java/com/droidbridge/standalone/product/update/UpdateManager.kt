@@ -189,23 +189,7 @@ class UpdateManager(
         return target
     }
 
-    /**
-     * S-UPD-001 cleanup on Updates entry and cold start: files older than 24 hours go first, then
-     * unreferenced verified artifacts oldest-first while the cache exceeds 1 GiB.
-     */
-    fun cleanup(referenced: Set<File>) {
-        val now = clock()
-        val files = cacheRoot.walkBottomUp().filter { it.isFile }.sortedBy { it.lastModified() }.toList()
-        val remaining = files.filterNot { file ->
-            (now - file.lastModified() > MAX_AGE_MILLIS && file !in referenced) && file.delete()
-        }.toMutableList()
-        var total = remaining.sumOf { it.length() }
-        remaining.filter { it !in referenced }.forEach { file ->
-            if (total <= MAX_CACHE_BYTES) return@forEach
-            val size = file.length()
-            if (file.delete()) total -= size
-        }
-        cacheRoot.walkBottomUp().filter { it.isDirectory && it != cacheRoot }.forEach { it.delete() }
+    fun refreshDownloads() {
         mutableState.update { current ->
             current.copy(downloads = current.downloads?.takeIf { it.apk.isFile })
         }
@@ -215,10 +199,18 @@ class UpdateManager(
         is ReleaseClassification.ProductUpdate -> manifest
         else -> null
     }
+}
 
-    companion object {
-        private const val MAX_AGE_MILLIS = 24L * 60 * 60 * 1000
-        private const val MAX_CACHE_BYTES = 1L shl 30
-
+internal fun cleanupUpdateCache(cacheRoot: File, referenced: Set<File>, now: Long) {
+    val files = cacheRoot.walkBottomUp().filter { it.isFile }.sortedBy { it.lastModified() }.toList()
+    val remaining = files.filterNot { file ->
+        (now - file.lastModified() > (24L * 60 * 60 * 1000) && file !in referenced) && file.delete()
+    }.toMutableList()
+    var total = remaining.sumOf { it.length() }
+    remaining.filter { it !in referenced }.forEach { file ->
+        if (total <= (1L shl 30)) return@forEach
+        val size = file.length()
+        if (file.delete()) total -= size
     }
+    cacheRoot.walkBottomUp().filter { it.isDirectory && it != cacheRoot }.forEach { it.delete() }
 }

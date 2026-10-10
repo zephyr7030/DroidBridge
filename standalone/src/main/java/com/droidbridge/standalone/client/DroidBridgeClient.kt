@@ -88,11 +88,13 @@ class DroidBridgeClient(
         } ?: bind()
     }
 
-    fun requestShizukuAuthorization() {
-        runtime?.let { service ->
-            runCatching { service.requestShizukuAuthorization() }
-            requestRefresh(tokenCounter.get())
-        } ?: bind()
+    suspend fun requestShizukuAuthorization(): Boolean {
+        val service = runtime ?: run { bind(); return false }
+        val requested = withContext(Dispatchers.IO) {
+            runCatching { service.requestShizukuAuthorization() }.getOrDefault(false)
+        }
+        requestRefresh(tokenCounter.get())
+        return requested
     }
 
     fun deliverMediaProjectionConsent(resultCode: Int, resultData: Intent) {

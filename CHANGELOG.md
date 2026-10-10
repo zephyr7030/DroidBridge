@@ -1,5 +1,21 @@
 # Changelog / 更新日志
 
+## 0.5.4
+
+### English
+- Recover update maintenance when the verified target APK was installed externally, and protect cached APKs still referenced by maintenance.
+- Preserve update failure codes and stages; show bounded installer diagnostics correlated to the current attempt and session.
+- Handle installer callbacks in the Runtime process with a deadline, reject stale or duplicate confirmation callbacks, and reconcile actual package facts after restart.
+- Detect Shizuku Plus and guide Compat Hub setup. Open the available manager without changing authorization or execution identity.
+- Keep ARM64 and x86_64 support in the existing APK filename.
+
+### 中文
+- 外部安装准确目标 APK 后恢复更新维护状态，保护维护记录仍引用的缓存 APK。
+- 保留更新失败的错误码与阶段，展示与当前安装尝试、会话对应的有限诊断信息。
+- 在 Runtime 进程处理安装回执并限制处理时间，拒绝旧回执和重复确认，重启后根据真实安装事实恢复。
+- 识别 Shizuku Plus 并引导配置 Compat Hub，按实际可用的管理器提供入口，保持授权与执行身份校验。
+- 沿用原 APK 文件名，继续支持 ARM64 和 x86_64。
+
 ## 0.5.3
 
 ### English

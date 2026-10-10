@@ -392,4 +392,5 @@
     <string name="capabilities_all_set">Everything is ready</string>
     <string name="nav_home">Home</string>
     <string name="settings_data_summary_runtime">Credentials and Runtime data</string>
+    <string name="shizuku_state_compat_required">Compat Hub setup required</string>
 </resources>
