@@ -464,7 +464,13 @@ impl FilesystemPrimitivePort for FixturePrimitivePort {
             #[cfg(not(unix))]
             inode: 0,
             mode,
+            #[cfg(unix)]
+            uid: metadata.uid(),
+            #[cfg(not(unix))]
             uid: 0,
+            #[cfg(unix)]
+            gid: metadata.gid(),
+            #[cfg(not(unix))]
             gid: 0,
             size: metadata.len(),
             modified_at_epoch_seconds: 0,

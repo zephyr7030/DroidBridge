@@ -1387,10 +1387,19 @@ mod tests {
 
     /// Reads one HTTP request frame, head and body, as the tunnel's transport writes it.
     fn read_request(stream: &mut TcpStream) -> CapturedRequest {
+        read_request_unless_closed(stream).expect("connection closed before its request")
+    }
+
+    /// `None` when the connection ended before a single request byte: a client shutting down
+    /// abandons the poll connection it had opened but not yet written to.
+    fn read_request_unless_closed(stream: &mut TcpStream) -> Option<CapturedRequest> {
         let mut raw = Vec::new();
         let mut block = [0_u8; 4096];
         let header_end = loop {
-            let read = stream.read(&mut block).unwrap();
+            let read = match stream.read(&mut block) {
+                Ok(0) | Err(_) if raw.is_empty() => return None,
+                read => read.unwrap(),
+            };
             assert!(read > 0);
             raw.extend_from_slice(&block[..read]);
             if let Some(index) = raw.windows(4).position(|window| window == b"\r\n\r\n") {
@@ -1418,11 +1427,11 @@ mod tests {
             .and_then(|line| line.split(' ').nth(1))
             .unwrap_or_default()
             .to_owned();
-        CapturedRequest {
+        Some(CapturedRequest {
             path,
             headers,
             body: raw[header_end..header_end + content_length].to_vec(),
-        }
+        })
     }
 
     /// The script's answer. A client that shut itself down while this answer was in flight has
@@ -1513,7 +1522,9 @@ mod tests {
                     if halted.load(Ordering::SeqCst) {
                         return;
                     }
-                    let request = read_request(&mut stream);
+                    let Some(request) = read_request_unless_closed(&mut stream) else {
+                        continue;
+                    };
                     let poll = request.path.contains("/poll");
                     output.lock().unwrap().push(request);
                     let answered = if poll {
