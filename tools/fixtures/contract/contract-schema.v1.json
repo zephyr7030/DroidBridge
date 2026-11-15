@@ -1076,65 +1076,25 @@
                     }
                   ]
                 },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
-                      "$ref": "#/$defs/UuidV4"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
-                  ]
-                }
-              ],
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "node_ref"
+              ]
             },
             {
               "type": "object",
@@ -1150,65 +1110,121 @@
                     }
                   ]
                 },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "node_ref"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
                       "$ref": "#/$defs/UuidV4"
                     },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
+                    {
+                      "type": "null"
                     }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
                   ]
+                },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
                 }
-              ],
+              },
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
             },
             {
               "type": "object",
@@ -4528,65 +4544,25 @@
                     }
                   ]
                 },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
-                      "$ref": "#/$defs/UuidV4"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
-                  ]
-                }
-              ],
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "node_ref"
+              ]
             },
             {
               "type": "object",
@@ -4602,65 +4578,121 @@
                     }
                   ]
                 },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "node_ref"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
                       "$ref": "#/$defs/UuidV4"
                     },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
+                    {
+                      "type": "null"
                     }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
                   ]
+                },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
                 }
-              ],
+              },
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
             },
             {
               "type": "object",
@@ -6797,65 +6829,25 @@
                     }
                   ]
                 },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
-                      "$ref": "#/$defs/UuidV4"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
-                  ]
-                }
-              ],
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "node_ref"
+              ]
             },
             {
               "type": "object",
@@ -6871,65 +6863,121 @@
                     }
                   ]
                 },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "node_ref"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
                       "$ref": "#/$defs/UuidV4"
                     },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
+                    {
+                      "type": "null"
                     }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
                   ]
+                },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
                 }
-              ],
+              },
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
             },
             {
               "type": "object",
@@ -8312,65 +8360,25 @@
                     }
                   ]
                 },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
-                      "$ref": "#/$defs/UuidV4"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
-                  ]
-                }
-              ],
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "node_ref"
+              ]
             },
             {
               "type": "object",
@@ -8386,65 +8394,121 @@
                     }
                   ]
                 },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "node_ref"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
                       "$ref": "#/$defs/UuidV4"
                     },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
+                    {
+                      "type": "null"
                     }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
                   ]
+                },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
                 }
-              ],
+              },
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
             },
             {
               "type": "object",
@@ -9682,65 +9746,25 @@
                     }
                   ]
                 },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
-                      "$ref": "#/$defs/UuidV4"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
-                  ]
-                }
-              ],
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "node_ref"
+              ]
             },
             {
               "type": "object",
@@ -9756,65 +9780,121 @@
                     }
                   ]
                 },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "tap"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "node_ref": {
+                  "description": "Node reference returned by an observation that requested UI nodes.",
+                  "type": "string"
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "node"
                 }
               },
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "node_ref": {
-                      "description": "Node reference returned by an observation that requested UI nodes.",
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "string",
-                      "const": "node"
-                    }
-                  },
-                  "required": [
-                    "target",
-                    "node_ref"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "observation_id": {
-                      "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "target",
+                "node_ref"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
                       "$ref": "#/$defs/UuidV4"
                     },
-                    "target": {
-                      "type": "string",
-                      "const": "coordinate"
-                    },
-                    "x": {
-                      "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
-                    },
-                    "y": {
-                      "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
-                      "type": "integer",
-                      "format": "uint32",
-                      "minimum": 0
+                    {
+                      "type": "null"
                     }
-                  },
-                  "required": [
-                    "target",
-                    "observation_id",
-                    "x",
-                    "y"
                   ]
+                },
+                "observation_id": {
+                  "description": "Identifier from the observation used to choose these coordinates. Use a fresh observation if the reference is stale.",
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "long_press"
+                },
+                "target": {
+                  "type": "string",
+                  "const": "coordinate"
+                },
+                "x": {
+                  "description": "Horizontal coordinate in native display pixels: 0 <= x < display.width.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "y": {
+                  "description": "Vertical coordinate in native display pixels: 0 <= y < display.height.",
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
                 }
-              ],
+              },
+              "additionalProperties": false,
               "required": [
-                "operation"
-              ],
-              "unevaluatedProperties": false
+                "operation",
+                "target",
+                "observation_id",
+                "x",
+                "y"
+              ]
             },
             {
               "type": "object",

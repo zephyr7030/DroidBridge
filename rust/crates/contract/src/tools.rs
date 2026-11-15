@@ -1175,7 +1175,7 @@ pub enum PointTarget {
 }
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "operation")]
-#[schemars(deny_unknown_fields)]
+#[schemars(deny_unknown_fields, transform = flatten_target_alternatives)]
 pub enum VisualInteractInput {
     #[serde(rename = "tap")]
     Tap {
@@ -1239,6 +1239,79 @@ pub enum VisualInteractInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         lease_id: Option<UuidV4>,
     },
+}
+
+/// Connector importers that hoist a nested union out of its parent drop the parent's `operation`,
+/// so a tap target then also matches the identical long-press target and the call is refused as
+/// matching several schemas. Each operation/target pair therefore becomes one self-contained
+/// alternative carrying both constants. Any shape this does not recognise panics at generation.
+fn flatten_target_alternatives(schema: &mut schemars::Schema) {
+    use serde_json::{Map, Value, json};
+
+    fn object<'a>(value: &'a Value, allowed: &[&str], what: &str) -> &'a Map<String, Value> {
+        let map = value
+            .as_object()
+            .unwrap_or_else(|| panic!("{what} is not an object schema"));
+        if let Some(key) = map.keys().find(|key| !allowed.contains(&key.as_str())) {
+            panic!("{what} has unexpected schema keyword {key}");
+        }
+        assert_eq!(
+            map.get("type"),
+            Some(&json!("object")),
+            "{what} is not typed as an object"
+        );
+        map
+    }
+    fn names(map: &Map<String, Value>, what: &str) -> Vec<Value> {
+        map.get("required")
+            .and_then(Value::as_array)
+            .unwrap_or_else(|| panic!("{what} has no required list"))
+            .clone()
+    }
+
+    let alternatives = schema
+        .get_mut("oneOf")
+        .and_then(Value::as_array_mut)
+        .expect("visual interaction schema is a oneOf");
+    let mut flat = Vec::with_capacity(alternatives.len() + 2);
+    for alternative in alternatives.drain(..) {
+        if alternative.get("oneOf").is_none() {
+            flat.push(alternative);
+            continue;
+        }
+        let parent = object(
+            &alternative,
+            &[
+                "type",
+                "properties",
+                "oneOf",
+                "required",
+                "unevaluatedProperties",
+            ],
+            "operation with nested targets",
+        );
+        assert_eq!(parent.get("unevaluatedProperties"), Some(&json!(false)));
+        let parent_properties = parent["properties"].as_object().expect("parent properties");
+        for target in parent["oneOf"].as_array().expect("nested target union") {
+            let child = object(target, &["type", "properties", "required"], "point target");
+            let mut properties = parent_properties.clone();
+            for (name, property) in child["properties"].as_object().expect("target properties") {
+                assert!(
+                    properties.insert(name.clone(), property.clone()).is_none(),
+                    "target property {name} overlaps its operation's own property"
+                );
+            }
+            let mut required = names(parent, "operation");
+            required.extend(names(child, "point target"));
+            flat.push(json!({
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": false,
+                "required": required,
+            }));
+        }
+    }
+    *alternatives = flat;
 }
 
 impl VisualInteractInput {

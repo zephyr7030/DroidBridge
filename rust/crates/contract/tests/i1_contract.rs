@@ -255,6 +255,40 @@ fn i1_g04_dispatch_and_nested_domain_unions_are_unambiguous() {
     );
 }
 
+/// A connector that hoists a union nested beside `properties` loses the parent's `operation`;
+/// every visual-interaction alternative therefore stands alone and is told apart by constants.
+#[test]
+fn i1_g04_visual_interaction_alternatives_are_flat_and_disjoint() {
+    let artifact = generated_artifacts()
+        .into_iter()
+        .find(|artifact| artifact.relative_path == "contract-schema.v1.json")
+        .unwrap();
+    let schema: Value = serde_json::from_slice(&artifact.bytes).unwrap();
+    let alternatives = schema["schemas"]["public_request"]["$defs"]["VisualInteractInput"]["oneOf"]
+        .as_array()
+        .unwrap();
+    let mut keys = BTreeSet::new();
+    for alternative in alternatives {
+        assert!(alternative.get("oneOf").is_none() && alternative.get("anyOf").is_none());
+        assert_eq!(alternative["additionalProperties"], false);
+        let properties = &alternative["properties"];
+        let operation = properties["operation"]["const"].as_str().unwrap();
+        let target = properties["target"]["const"].as_str();
+        let required: Vec<_> = alternative["required"].as_array().unwrap().iter().collect();
+        assert!(required.contains(&&json!("operation")));
+        if let Some(target) = target {
+            assert!(matches!(operation, "tap" | "long_press"));
+            assert!(matches!(target, "node" | "coordinate"));
+            assert!(required.contains(&&json!("target")));
+        }
+        assert!(
+            keys.insert((operation, target)),
+            "{operation}/{target:?} repeats"
+        );
+    }
+    assert_eq!(keys.len(), 7);
+}
+
 #[test]
 fn i1_g05_settlement_bounds_cover_escaped_terminal_shapes() {
     let bounds = settlement_bounds();
