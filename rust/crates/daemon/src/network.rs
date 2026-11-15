@@ -774,8 +774,8 @@ pub enum CaptureActivation {
 
 /// One open capture device. The real implementation is the bundled static libpcap adapter and a
 /// test supplies a scripted one, so every bound and settlement above the seam is exercised
-/// without a device. This is not a fallback path: the Magisk host always installs the libpcap
-/// adapter.
+/// without a device. This is not a fallback path: on Android the Magisk host always installs the
+/// libpcap adapter.
 pub trait CaptureDevice: Send {
     fn activate(&mut self) -> Result<CaptureActivation, String>;
     fn next_packet(&mut self) -> CaptureStep;
@@ -808,6 +808,22 @@ const CAPTURE_READ_SLICE_MS: libc::c_int = 200;
 /// directly. It is an Android artifact, so it exists exactly where the daemon runs.
 #[cfg(target_os = "android")]
 pub use pcap_ffi::LibpcapBackend as MagiskCaptureBackend;
+
+/// Host builds link no libpcap, so every open is refused; nothing substitutes host capture.
+#[cfg(not(target_os = "android"))]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MagiskCaptureBackend;
+
+#[cfg(not(target_os = "android"))]
+impl CaptureBackend for MagiskCaptureBackend {
+    fn open(
+        &self,
+        _interface: &str,
+        _filter: Option<&str>,
+    ) -> Result<Box<dyn CaptureDevice>, String> {
+        Err("packet capture backend is only available on Android".to_owned())
+    }
+}
 
 #[cfg(target_os = "android")]
 mod pcap_ffi {

@@ -2253,3 +2253,20 @@ fn i8_net_g17_a_capture_declares_the_link_type_its_records_carry_and_a_nameless_
         "a named refusal is not the device fault"
     );
 }
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn i8_net_host_build_capture_backend_refuses_every_open() {
+    for interface in ["wlan0", "eth0", "any", "lo"] {
+        for filter in [None, Some("tcp")] {
+            let refused = daemon::network::MagiskCaptureBackend
+                .open(interface, filter)
+                .err()
+                .expect("a host build has no capture device");
+            assert_eq!(
+                refused,
+                "packet capture backend is only available on Android"
+            );
+        }
+    }
+}
