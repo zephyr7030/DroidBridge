@@ -265,7 +265,7 @@ mod tests {
     fn i10_g06_loopback_listener_frames_http_through_the_shared_facade() {
         let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
-        let facade = McpFacade::new(CannedHost, port, "0.1.0".to_owned()).unwrap();
+        let facade = McpFacade::new(CannedHost, "0.1.0".to_owned()).unwrap();
         let served = McpListener::serve(listener, TOKEN.to_owned(), facade).unwrap();
         assert_eq!(served.state(), "running");
 
@@ -308,7 +308,7 @@ mod tests {
     fn a_silent_connection_is_closed_by_the_header_timeout() {
         let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
-        let facade = McpFacade::new(CannedHost, port, "0.1.0".to_owned()).unwrap();
+        let facade = McpFacade::new(CannedHost, "0.1.0".to_owned()).unwrap();
         let served = McpListener::serve(listener, TOKEN.to_owned(), facade).unwrap();
 
         let mut silent = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();

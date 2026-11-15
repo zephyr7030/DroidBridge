@@ -3,8 +3,8 @@
 
 use domain::DomainError;
 use runtime::{
-    MCP_DEBUG_PORT, McpArtifactReply, McpFacade, McpHost, McpRequest, McpResponse, PortFuture,
-    mcp_resource_cursor, mcp_resource_cursor_ref,
+    McpArtifactReply, McpFacade, McpHost, McpRequest, McpResponse, PortFuture, mcp_resource_cursor,
+    mcp_resource_cursor_ref,
 };
 use serde_json::{Value, json};
 use std::{
@@ -123,7 +123,7 @@ fn tempfile() -> std::fs::File {
 fn facade() -> (McpFacade<RecordingHost>, RecordingHost) {
     let host = RecordingHost::default();
     (
-        McpFacade::new(host.clone(), MCP_DEBUG_PORT, "0.1.0".to_owned()).unwrap(),
+        McpFacade::new(host.clone(), "0.1.0".to_owned()).unwrap(),
         host,
     )
 }
@@ -391,10 +391,11 @@ async fn i10_g05_header_and_envelope_validation_is_deterministic() {
             None,
         ),
         (
-            with_header(list(), "Host", Some("localhost:8765")),
+            with_header(list(), "Host", Some("localhost.evil.example:18765")),
             403,
             None,
         ),
+        (with_header(list(), "Host", Some("127.0.0.1:")), 403, None),
         (
             with_header(list(), "Origin", Some("https://evil.example")),
             403,
@@ -436,12 +437,12 @@ async fn i10_g05_header_and_envelope_validation_is_deterministic() {
             Some(-32600),
         ),
         (
-            with_header(list(), "MCP-Protocol-Version", None),
+            with_header(list(), "MCP-Protocol-Version", Some("latest")),
             400,
             Some(-32020),
         ),
         (
-            with_header(list(), "MCP-Protocol-Version", Some("2025-11-25")),
+            with_header(list(), "MCP-Protocol-Version", Some("2024-11-05")),
             400,
             Some(-32022),
         ),
@@ -503,15 +504,31 @@ async fn i10_g05_header_and_envelope_validation_is_deterministic() {
         }
     }
 
+    // `adb forward tcp:9000 tcp:<port>` delivers the port the client dialled; the name still
+    // has to be loopback.
+    for forwarded in ["127.0.0.1:9000", "localhost:9000", "localhost"] {
+        let response = facade
+            .handle(with_header(list(), "Host", Some(forwarded)), TOKEN)
+            .await;
+        assert_eq!(response.status, 200, "{forwarded}");
+        assert!(
+            json_body(&response)["result"]["tools"].is_array(),
+            "{forwarded}"
+        );
+    }
+
     let unsupported = facade
         .handle(
-            with_header(list(), "MCP-Protocol-Version", Some("2025-11-25")),
+            with_header(list(), "MCP-Protocol-Version", Some("2024-11-05")),
             TOKEN,
         )
         .await;
     assert_eq!(
         json_body(&unsupported)["error"]["data"],
-        json!({"supported": ["2026-07-28"], "requested": "2025-11-25"})
+        json!({
+            "supported": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"],
+            "requested": "2024-11-05",
+        })
     );
 
     // A notification is refused with no body and no business side effect.
@@ -1082,6 +1099,195 @@ async fn i10_g09_tool_calls_are_admitted_without_the_private_request_id_key() {
         "params._meta.io.droidbridge/requestId"
     );
     assert_eq!(host.submitted().len(), 3);
+}
+
+/// An initialization-based client, as most MCP SDKs still are, sends `initialize` without a
+/// version header, then names its negotiated revision and carries no 2026 `_meta`.
+fn legacy(version: Option<&str>, message: &Value) -> McpRequest {
+    let mut request = McpRequest {
+        method: "POST".to_owned(),
+        headers: headers("unused", None),
+        body: serde_json::to_vec(message).unwrap(),
+    };
+    request = with_header(request, "Mcp-Method", None);
+    with_header(request, "MCP-Protocol-Version", version)
+}
+
+#[tokio::test]
+async fn i10_g10_initialization_based_clients_are_served_on_the_same_endpoint() {
+    let (facade, host) = facade();
+    let initialize = |requested: &str| {
+        body(
+            json!(0),
+            "initialize",
+            json!({
+                "protocolVersion": requested,
+                "capabilities": {},
+                "clientInfo": {"name": "codex-mcp-client", "version": "0.166.0"},
+            }),
+        )
+    };
+
+    let accepted = facade
+        .handle(legacy(None, &initialize("2025-06-18")), TOKEN)
+        .await;
+    assert_eq!(accepted.status, 200);
+    assert_eq!(
+        json_body(&accepted)["result"],
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {"tools": {}, "resources": {}},
+            "serverInfo": {"name": "DroidBridge", "version": "0.1.0"},
+        })
+    );
+    // A revision this endpoint does not serve is answered with the newest one it does.
+    let newer = json_body(
+        &facade
+            .handle(legacy(None, &initialize("2024-11-05")), TOKEN)
+            .await,
+    );
+    assert_eq!(newer["result"]["protocolVersion"], "2025-11-25");
+    let incomplete = json_body(
+        &facade
+            .handle(
+                legacy(
+                    None,
+                    &body(
+                        json!(0),
+                        "initialize",
+                        json!({"protocolVersion": "2025-06-18"}),
+                    ),
+                ),
+                TOKEN,
+            )
+            .await,
+    );
+    assert_eq!(incomplete["error"]["code"], -32602);
+
+    let initialized = facade
+        .handle(
+            legacy(
+                Some("2025-06-18"),
+                &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            ),
+            TOKEN,
+        )
+        .await;
+    assert_eq!(
+        initialized,
+        McpResponse {
+            status: 202,
+            body: None
+        }
+    );
+    let ping = json_body(
+        &facade
+            .handle(
+                legacy(Some("2025-11-25"), &body(json!(1), "ping", json!({}))),
+                TOKEN,
+            )
+            .await,
+    );
+    assert_eq!(ping["result"], json!({}));
+    // The stateless discovery method is not part of these revisions.
+    let discover = facade
+        .handle(
+            legacy(
+                Some("2025-06-18"),
+                &body(json!(2), "server/discover", json!({})),
+            ),
+            TOKEN,
+        )
+        .await;
+    assert_eq!(discover.status, 200);
+    assert_eq!(json_body(&discover)["error"]["code"], -32601);
+
+    // The same tools, with the input schemas the stateless revision advertises and no output
+    // schema, since these revisions require an object-typed one.
+    let modern = json_body(
+        &facade
+            .handle(
+                request(
+                    "tools/list",
+                    None,
+                    &body(json!(3), "tools/list", json!({"_meta": meta()})),
+                ),
+                TOKEN,
+            )
+            .await,
+    );
+    let listed = json_body(
+        &facade
+            .handle(
+                legacy(Some("2025-06-18"), &body(json!(3), "tools/list", json!({}))),
+                TOKEN,
+            )
+            .await,
+    );
+    let result = listed["result"].as_object().unwrap();
+    for field in ["resultType", "ttlMs", "cacheScope"] {
+        assert!(!result.contains_key(field), "{field}");
+    }
+    let tools = result["tools"].as_array().unwrap();
+    assert_eq!(
+        tools.len(),
+        modern["result"]["tools"].as_array().unwrap().len()
+    );
+    for (tool, modern_tool) in tools
+        .iter()
+        .zip(modern["result"]["tools"].as_array().unwrap())
+    {
+        assert_eq!(tool["name"], modern_tool["name"]);
+        assert_eq!(tool["inputSchema"], modern_tool["inputSchema"]);
+        assert_eq!(tool["inputSchema"]["type"], "object");
+        assert!(tool.get("outputSchema").is_none());
+    }
+
+    // A call without `_meta`, under a negotiated revision and under none (read as 2025-03-26),
+    // reaches the Runtime once each with a minted request id.
+    host.reply_submit(json!({
+        "protocol_version": 1, "request_id": REQUEST_ID, "outcome": "success",
+        "result": {"tasks": []},
+    }));
+    let call = body(
+        json!(4),
+        "tools/call",
+        json!({"name": "task_control", "arguments": {"action": "list", "input": {}}}),
+    );
+    for version in [Some("2025-06-18"), None] {
+        let called = json_body(&facade.handle(legacy(version, &call), TOKEN).await);
+        let result = called["result"].as_object().unwrap();
+        assert_eq!(result["isError"], false, "{called}");
+        assert_eq!(result["structuredContent"], json!({"tasks": []}));
+        assert!(!result.contains_key("resultType"));
+    }
+    let submitted = host.submitted();
+    assert_eq!(submitted.len(), 2);
+    assert_ne!(submitted[0]["request_id"], submitted[1]["request_id"]);
+
+    // Authentication and origin checks come before any protocol era.
+    assert_eq!(
+        facade
+            .handle(legacy(None, &initialize("2025-06-18")), "wrong-token")
+            .await
+            .status,
+        401
+    );
+    assert_eq!(
+        facade
+            .handle(
+                with_header(
+                    legacy(None, &initialize("2025-06-18")),
+                    "Origin",
+                    Some("https://evil.example"),
+                ),
+                TOKEN,
+            )
+            .await
+            .status,
+        403
+    );
+    assert_eq!(host.submitted().len(), 2);
 }
 
 #[tokio::test]

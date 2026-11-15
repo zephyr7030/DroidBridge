@@ -1110,7 +1110,7 @@ async fn read_bounded(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MCP_DEBUG_PORT, McpArtifactReply, PortFuture};
+    use crate::{McpArtifactReply, PortFuture};
     use contract::ErrorCode;
     use domain::DomainError;
     use std::{
@@ -1152,7 +1152,7 @@ mod tests {
 
     fn client(base_url: &str) -> TunnelClient<NoopHost> {
         TunnelClient::new_with_base_url(
-            McpFacade::new(NoopHost, MCP_DEBUG_PORT, "0.1.0".to_owned()).unwrap(),
+            McpFacade::new(NoopHost, "0.1.0".to_owned()).unwrap(),
             TUNNEL_ID,
             "test-api-key",
             "0.1.0",
@@ -1583,7 +1583,7 @@ mod tests {
 
     fn gated_client(base_url: &str, host: GateHost) -> TunnelClient<GateHost> {
         TunnelClient::new_with_base_url(
-            McpFacade::new(host, MCP_DEBUG_PORT, "0.1.0".to_owned()).unwrap(),
+            McpFacade::new(host, "0.1.0".to_owned()).unwrap(),
             TUNNEL_ID,
             "test-api-key",
             "0.1.0",

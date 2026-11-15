@@ -95,13 +95,9 @@ pub(crate) fn initialize_host_bridge(env: &mut jni::Env<'_>) -> jni::errors::Res
 }
 
 pub(crate) fn kotlin_facade(
-    port: u16,
     product_version: String,
 ) -> Result<McpFacade<KotlinMcpHost>, DomainError> {
-    if port != MCP_STABLE_PORT && port != MCP_DEBUG_PORT {
-        return Err(DomainError::invalid("MCP port is not a build endpoint"));
-    }
-    McpFacade::new(KotlinMcpHost::new(), port, product_version)
+    McpFacade::new(KotlinMcpHost::new(), product_version)
 }
 
 impl McpHost for KotlinMcpHost {
@@ -267,7 +263,7 @@ fn start_listener(port: jint, token: String, product_version: String) -> Result<
     if let Some(previous) = slot.take() {
         previous.stop();
     }
-    let facade = kotlin_facade(port, product_version)?;
+    let facade = kotlin_facade(product_version)?;
     *slot = Some(McpListener::start(port, token, facade)?);
     Ok(())
 }

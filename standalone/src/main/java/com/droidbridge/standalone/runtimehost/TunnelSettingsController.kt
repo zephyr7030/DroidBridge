@@ -32,15 +32,12 @@ internal interface TunnelRuntimePort {
     fun lastError(): String? = null
 }
 
-internal class NativeTunnelRuntime(
-    private val port: Int,
-    private val productVersion: String,
-) : TunnelRuntimePort {
+internal class NativeTunnelRuntime(private val productVersion: String) : TunnelRuntimePort {
     override fun validate(tunnelId: String, apiKey: String): String =
         NativeRuntime.nativeTunnelValidate(tunnelId, apiKey, productVersion) ?: TUNNEL_VALIDATION_UNAVAILABLE
 
     override fun start(tunnelId: String, apiKey: String): Boolean =
-        NativeRuntime.nativeTunnelStart(port, tunnelId, apiKey, productVersion)
+        NativeRuntime.nativeTunnelStart(tunnelId, apiKey, productVersion)
 
     override fun stop(): Boolean = NativeRuntime.nativeTunnelStop()
 

@@ -152,10 +152,22 @@
 ## 连接本地智能体
 
 1. 在 App 中打开 **智能体连接 → 本地 MCP**，打开并复制令牌。
-2. 让 MCP 客户端连接 `http://127.0.0.1:8765/mcp`（Root 版为 `8766`），请求头 `Authorization: Bearer <令牌>`。从电脑连接时先转发端口：
+2. 让 MCP 客户端连接 `http://127.0.0.1:8765/mcp`（Root 版为 `8766`），请求头 `Authorization: Bearer <令牌>`。端点使用 MCP 2026-07-28，同时兼容仍以 `initialize` 开始连接的客户端（2025-03-26、2025-06-18、2025-11-25）。从电脑连接时先转发端口，本机端口可以任选：
 
    ```bash
    adb forward tcp:8765 tcp:8765
+   ```
+
+   Claude Code：
+
+   ```bash
+   claude mcp add --transport http droidbridge http://127.0.0.1:8765/mcp --header "Authorization: Bearer <令牌>"
+   ```
+
+   Codex（令牌放在环境变量里）：
+
+   ```bash
+   codex mcp add droidbridge --url http://127.0.0.1:8765/mcp --bearer-token-env-var DROIDBRIDGE_TOKEN
    ```
 
 ## 截图

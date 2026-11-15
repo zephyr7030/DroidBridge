@@ -263,7 +263,7 @@ impl<H: McpHost + Clone + 'static> DaemonIngress<H> {
             }
             self.stop_listener();
         }
-        let started = McpFacade::new(host, self.port, self.product_version.clone())
+        let started = McpFacade::new(host, self.product_version.clone())
             .and_then(|facade| McpListener::start(self.port, token.clone(), facade));
         match started {
             Ok(listener) => {
@@ -287,7 +287,7 @@ impl<H: McpHost + Clone + 'static> DaemonIngress<H> {
             return;
         }
         self.stop_tunnel();
-        let started = McpFacade::new(host, self.port, self.product_version.clone())
+        let started = McpFacade::new(host, self.product_version.clone())
             .map_err(|_| ())
             .and_then(|facade| {
                 TunnelClient::new(

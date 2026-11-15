@@ -174,11 +174,24 @@ Module updates are offered by your root manager.
 
 1. In the app open **Agent connection → Local MCP**, turn it on and copy the token.
 2. Point your MCP client at `http://127.0.0.1:8765/mcp` (root edition: `8766`) with
-   `Authorization: Bearer <token>`.
-   From a computer, forward the port first:
+   `Authorization: Bearer <token>`. The endpoint speaks MCP 2026-07-28 and also serves clients
+   that still begin with `initialize` (2025-03-26, 2025-06-18 and 2025-11-25).
+   From a computer, forward the port first; any free local port works:
 
    ```bash
    adb forward tcp:8765 tcp:8765
+   ```
+
+   Claude Code:
+
+   ```bash
+   claude mcp add --transport http droidbridge http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
+   ```
+
+   Codex, with the token in an environment variable:
+
+   ```bash
+   codex mcp add droidbridge --url http://127.0.0.1:8765/mcp --bearer-token-env-var DROIDBRIDGE_TOKEN
    ```
 
 ## Screenshots

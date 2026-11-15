@@ -4,7 +4,7 @@ use crate::mcp_listener::{initialize_host_bridge, kotlin_facade};
 use jni::{
     EnvUnowned, Outcome,
     objects::{JClass, JString},
-    sys::{JNI_FALSE, JNI_TRUE, jboolean, jint, jlong, jstring},
+    sys::{JNI_FALSE, JNI_TRUE, jboolean, jlong, jstring},
 };
 use runtime::{TunnelClient, TunnelError, TunnelRuntime, validate_tunnel_credentials};
 use std::{ptr, sync::Mutex};
@@ -16,13 +16,10 @@ fn tunnel_slot() -> Result<std::sync::MutexGuard<'static, Option<TunnelRuntime>>
 }
 
 fn start_tunnel(
-    port: jint,
     tunnel_id: String,
     api_key: String,
     product_version: String,
 ) -> Result<(), TunnelError> {
-    let port =
-        u16::try_from(port).map_err(|_| TunnelError::InvalidConfig("MCP port is invalid"))?;
     let mut slot = tunnel_slot()?;
     // A start is idempotent for a live tunnel; a refused one is replaced, so a start after the
     // network changed tries again at once instead of waiting out its retry interval.
@@ -35,8 +32,8 @@ fn start_tunnel(
     if let Some(refused) = slot.take() {
         refused.stop();
     }
-    let facade = kotlin_facade(port, product_version.clone())
-        .map_err(|_| TunnelError::InvalidConfig("MCP port or product version is invalid"))?;
+    let facade = kotlin_facade(product_version.clone())
+        .map_err(|_| TunnelError::InvalidConfig("MCP product version is invalid"))?;
     let client = TunnelClient::new(facade, &tunnel_id, &api_key, &product_version)?;
     *slot = Some(TunnelRuntime::start(client)?);
     Ok(())
@@ -69,7 +66,6 @@ pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime
 pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime_nativeTunnelStart(
     mut env: EnvUnowned,
     _class: JClass,
-    port: jint,
     tunnel_id: JString,
     api_key: JString,
     product_version: JString,
@@ -81,7 +77,7 @@ pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime
             let api_key = api_key.mutf8_chars(owned)?.to_str().into_owned();
             let product_version = product_version.mutf8_chars(owned)?.to_str().into_owned();
             Ok(
-                if start_tunnel(port, tunnel_id, api_key, product_version).is_ok() {
+                if start_tunnel(tunnel_id, api_key, product_version).is_ok() {
                     JNI_TRUE
                 } else {
                     JNI_FALSE

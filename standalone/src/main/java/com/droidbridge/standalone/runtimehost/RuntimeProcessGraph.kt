@@ -61,7 +61,7 @@ internal class RuntimeProcessGraph(application: Application) {
         )
         tunnelSettings = TunnelSettingsController(
             settingsDirectory,
-            NativeTunnelRuntime(mcpPort, BuildConfig.VERSION_NAME),
+            NativeTunnelRuntime(BuildConfig.VERSION_NAME),
             AndroidTunnelNetworkMonitor(application.getSystemService(ConnectivityManager::class.java)),
             AndroidTunnelCredentialCipher(),
             AndroidMcpSettingsFileSystem(),

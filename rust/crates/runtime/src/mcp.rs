@@ -1,5 +1,5 @@
 //! The loopback MCP 2026-07-28 facade semantics (S-MCP-001..007), independent of the HTTP library
-//! that frames them. The facade owns no Task, Automation, capability or host truth: every tool call
+//! that frames them; initialization-based clients of the 2025 revisions are served alongside. The facade owns no Task, Automation, capability or host truth: every tool call
 //! and resource query goes to the currently authoritative Runtime through [`McpHost`].
 
 use crate::{PortFuture, command::new_uuid};
@@ -13,6 +13,10 @@ use serde_json::{Map, Value, json};
 use std::{collections::BTreeSet, io::Read};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
+/// The initialization-based revisions the same endpoint also serves, newest first (a dual-era
+/// server). A request is in that era when it carries one of these in `MCP-Protocol-Version` or no
+/// such header at all, which those revisions read as 2025-03-26.
+pub const MCP_LEGACY_PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 pub const MCP_BODY_LIMIT_BYTES: usize = 262_144;
 pub const MCP_RESPONSE_LIMIT_BYTES: usize = 12_000_000;
 pub const MCP_STABLE_PORT: u16 = 8765;
@@ -404,7 +408,6 @@ pub trait McpHost: Send + Sync {
 
 pub struct McpFacade<H> {
     host: H,
-    port: u16,
     product_version: String,
     tools: Value,
 }
@@ -412,7 +415,7 @@ pub struct McpFacade<H> {
 impl<H: McpHost> McpFacade<H> {
     /// Builds the facade for one build endpoint. Tool schemas are projected once from the
     /// generated Contract artifacts, never authored separately (S-CONTRACT-001).
-    pub fn new(host: H, port: u16, product_version: String) -> Result<Self, DomainError> {
+    pub fn new(host: H, product_version: String) -> Result<Self, DomainError> {
         if product_version.is_empty() {
             return Err(DomainError::new(
                 ErrorCode::InvalidArgument,
@@ -421,7 +424,6 @@ impl<H: McpHost> McpFacade<H> {
         }
         Ok(Self {
             host,
-            port,
             product_version,
             tools: tool_definitions()?,
         })
@@ -435,7 +437,7 @@ impl<H: McpHost> McpFacade<H> {
                 body: None,
             };
         }
-        if !self.host_is_endpoint(&request) || !origin_is_loopback(&request) {
+        if !host_is_loopback(&request) || !origin_is_loopback(&request) {
             return McpResponse {
                 status: 403,
                 body: None,
@@ -491,10 +493,12 @@ impl<H: McpHost> McpFacade<H> {
         if object.contains_key("result") || object.contains_key("error") {
             return rpc_error(400, Value::Null, INVALID_REQUEST, "Invalid Request", None);
         }
+        let legacy = is_legacy_request(&request);
         if object.get("method").is_some_and(Value::is_string) && !object.contains_key("id") {
-            // The revision defines no client notification DroidBridge accepts.
+            // An initialization-based client sends `notifications/initialized` and may cancel, and
+            // nothing is owed in reply; the stateless revision defines no client notification.
             return McpResponse {
-                status: 400,
+                status: if legacy { 202 } else { 400 },
                 body: None,
             };
         }
@@ -518,28 +522,71 @@ impl<H: McpHost> McpFacade<H> {
             None => Map::new(),
             Some(_) => return rpc_error(200, id, INVALID_REQUEST, "Invalid Request", None),
         };
+        if legacy {
+            return self.handle_legacy(id, method, &params).await;
+        }
         if let Err(response) = validate_metadata_headers(&request, &id, method, &params) {
             return response;
         }
         match method.as_str() {
             "server/discover" => self.discover(id, &params),
             "tools/list" => self.list_tools(id, &params),
-            "tools/call" => self.call_tool(id, &params).await,
+            "tools/call" => self.call_tool(id, &params, false).await,
             "resources/list" => self.list_resources(id, &params).await,
-            "resources/read" => self.read_resource(id, &params).await,
+            "resources/read" => self.read_resource(id, &params, false).await,
             _ => rpc_error(404, id, METHOD_NOT_FOUND, "Method not found", None),
         }
     }
 
-    fn host_is_endpoint(&self, request: &McpRequest) -> bool {
-        let Some(host) = single_header(request, "host") else {
-            return false;
+    /// Serves an initialization-based client through the same tools and resources. No session is
+    /// minted, so every request stands alone; results drop the stateless revision's own fields, and
+    /// tools carry no `outputSchema`, which those revisions require to be an object schema.
+    async fn handle_legacy(
+        &self,
+        id: Value,
+        method: &str,
+        params: &Map<String, Value>,
+    ) -> McpResponse {
+        let response = match method {
+            "initialize" => return self.initialize(id, params),
+            "ping" => return rpc_result(id, json!({})),
+            "tools/list" => self.list_tools(id, params),
+            "tools/call" => self.call_tool(id, params, true).await,
+            "resources/list" => self.list_resources(id, params).await,
+            "resources/read" => self.read_resource(id, params, true).await,
+            _ => return rpc_error(200, id, METHOD_NOT_FOUND, "Method not found", None),
         };
-        let Some((name, port)) = host.rsplit_once(':') else {
-            return false;
+        legacy_projection(response, method == "tools/list")
+    }
+
+    fn initialize(&self, id: Value, params: &Map<String, Value>) -> McpResponse {
+        let (Some(Value::String(requested)), Some(Value::Object(_)), Some(Value::Object(_))) = (
+            params.get("protocolVersion"),
+            params.get("capabilities"),
+            params.get("clientInfo"),
+        ) else {
+            return invalid_params(
+                id,
+                field_detail(
+                    "params",
+                    "expected protocolVersion, capabilities and clientInfo",
+                ),
+            );
         };
-        port == self.port.to_string()
-            && (name.eq_ignore_ascii_case("127.0.0.1") || name.eq_ignore_ascii_case("localhost"))
+        // A served revision is echoed; any other is answered with the newest one, which the client
+        // then accepts or disconnects from.
+        let version = MCP_LEGACY_PROTOCOL_VERSIONS
+            .into_iter()
+            .find(|version| version == requested)
+            .unwrap_or(MCP_LEGACY_PROTOCOL_VERSIONS[0]);
+        rpc_result(
+            id,
+            json!({
+                "protocolVersion": version,
+                "capabilities": {"tools": {}, "resources": {}},
+                "serverInfo": {"name": "DroidBridge", "version": self.product_version},
+            }),
+        )
     }
 
     fn server_meta(&self) -> Value {
@@ -587,12 +634,21 @@ impl<H: McpHost> McpFacade<H> {
         )
     }
 
-    async fn call_tool(&self, id: Value, params: &Map<String, Value>) -> McpResponse {
-        if params.len() != 3 || !only_keys(params, &["name", "arguments", "_meta"]) {
-            return invalid_params(
-                id,
-                field_detail("params", "expected exactly name, arguments and _meta"),
-            );
+    async fn call_tool(&self, id: Value, params: &Map<String, Value>, legacy: bool) -> McpResponse {
+        // Only the stateless revision carries `_meta` on every request.
+        let (shaped, expected) = if legacy {
+            (
+                params.contains_key("name") && params.contains_key("arguments"),
+                "expected name, arguments and an optional _meta",
+            )
+        } else {
+            (
+                params.len() == 3,
+                "expected exactly name, arguments and _meta",
+            )
+        };
+        if !shaped || !only_keys(params, &["name", "arguments", "_meta"]) {
+            return invalid_params(id, field_detail("params", expected));
         }
         let Some(name) = params["name"]
             .as_str()
@@ -622,7 +678,10 @@ impl<H: McpHost> McpFacade<H> {
         // keeps its duplicate safety across redeliveries. A spec-conformant MCP client cannot know
         // that key, so an absent one is minted here rather than rejected; a malformed one is still
         // the caller's error and never silently replaced.
-        let request_id = match params["_meta"].get(META_REQUEST_ID) {
+        let request_id = match params
+            .get("_meta")
+            .and_then(|meta| meta.get(META_REQUEST_ID))
+        {
             Some(value) => {
                 match value
                     .as_str()
@@ -988,9 +1047,22 @@ impl<H: McpHost> McpFacade<H> {
         rpc_result(id, result)
     }
 
-    async fn read_resource(&self, id: Value, params: &Map<String, Value>) -> McpResponse {
-        if params.len() != 2 || !only_keys(params, &["uri", "_meta"]) {
-            return invalid_params(id, field_detail("params", "expected exactly uri and _meta"));
+    async fn read_resource(
+        &self,
+        id: Value,
+        params: &Map<String, Value>,
+        legacy: bool,
+    ) -> McpResponse {
+        let (shaped, expected) = if legacy {
+            (
+                params.contains_key("uri"),
+                "expected uri and an optional _meta",
+            )
+        } else {
+            (params.len() == 2, "expected exactly uri and _meta")
+        };
+        if !shaped || !only_keys(params, &["uri", "_meta"]) {
+            return invalid_params(id, field_detail("params", expected));
         }
         let Some(uri) = params["uri"].as_str() else {
             return invalid_params(id, field_detail("params.uri", "expected a string"));
@@ -1110,12 +1182,14 @@ fn validate_metadata_headers(
     };
     if version != MCP_PROTOCOL_VERSION {
         if is_protocol_date(version) {
+            let mut supported = vec![MCP_PROTOCOL_VERSION];
+            supported.extend(MCP_LEGACY_PROTOCOL_VERSIONS);
             return Err(rpc_error(
                 400,
                 id.clone(),
                 UNSUPPORTED_PROTOCOL_VERSION,
                 "Unsupported protocol version",
-                Some(json!({"supported": [MCP_PROTOCOL_VERSION], "requested": version})),
+                Some(json!({"supported": supported, "requested": version})),
             ));
         }
         return Err(mismatch());
@@ -1519,6 +1593,20 @@ fn single_header<'a>(request: &'a McpRequest, name: &str) -> Option<&'a str> {
     }
 }
 
+/// The Host must name loopback, which defeats DNS rebinding. Its port is whatever the client
+/// dialled, which differs from the listening port behind `adb forward tcp:<other> tcp:<port>`.
+fn host_is_loopback(request: &McpRequest) -> bool {
+    let Some(host) = single_header(request, "host") else {
+        return false;
+    };
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
+        Some(_) => return false,
+        None => host,
+    };
+    name.eq_ignore_ascii_case("127.0.0.1") || name.eq_ignore_ascii_case("localhost")
+}
+
 fn origin_is_loopback(request: &McpRequest) -> bool {
     match header_values(request, "origin").as_slice() {
         [] => true,
@@ -1590,6 +1678,38 @@ fn is_protocol_date(value: &str) -> bool {
             4 | 7 => *byte == b'-',
             _ => byte.is_ascii_digit(),
         })
+}
+
+fn is_legacy_request(request: &McpRequest) -> bool {
+    match header_values(request, "mcp-protocol-version").as_slice() {
+        [] => true,
+        [version] => MCP_LEGACY_PROTOCOL_VERSIONS.contains(version),
+        _ => false,
+    }
+}
+
+/// Removes the stateless revision's own result fields, and for `tools/list` each tool's
+/// `outputSchema`, from a response the shared handlers built.
+fn legacy_projection(response: McpResponse, tool_list: bool) -> McpResponse {
+    let Some(mut message) = response
+        .body
+        .as_deref()
+        .and_then(|body| serde_json::from_slice::<Value>(body).ok())
+    else {
+        return response;
+    };
+    let Some(result) = message.get_mut("result").and_then(Value::as_object_mut) else {
+        return response;
+    };
+    for field in ["resultType", "ttlMs", "cacheScope"] {
+        result.remove(field);
+    }
+    if tool_list && let Some(Value::Array(tools)) = result.get_mut("tools") {
+        for tool in tools.iter_mut().filter_map(Value::as_object_mut) {
+            tool.remove("outputSchema");
+        }
+    }
+    json_response(response.status, &message)
 }
 
 fn only_keys(params: &Map<String, Value>, allowed: &[&str]) -> bool {
