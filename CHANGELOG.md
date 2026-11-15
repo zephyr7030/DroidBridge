@@ -1,5 +1,32 @@
 # Changelog / 更新日志
 
+## 0.5.9
+
+### English
+- Local MCP now also serves agents whose MCP client still starts with `initialize` (MCP 2025-03-26,
+  2025-06-18 and 2025-11-25), such as Codex CLI. Clients on MCP 2026-07-28, such as Claude Code, work
+  as before. From a computer, any free local port can be forwarded (`adb forward tcp:<any> tcp:8765`).
+- **Copy setup prompt** on the Local MCP page copies a prompt for your AI agent (Codex, Claude Code,
+  opencode and others): the agent forwards the port, adds DroidBridge to its own MCP configuration
+  and checks the connection. The same prompt with placeholders is in `AGENT-SETUP.md`. It contains
+  the access token, so the copy is marked sensitive.
+- `visual`: each tap and long-press target is now its own alternative in the published input schema,
+  so connectors that flatten nested schemas no longer refuse a coordinate tap with "Value matches
+  multiple schemas". The inputs DroidBridge accepts are unchanged.
+- For contributors: the root daemon and the Rust core now build and pass their tests on desktop
+  Linux.
+
+### 中文
+- 本地 MCP 现在也支持仍以 `initialize` 开始连接的智能体客户端（MCP 2025-03-26、2025-06-18、2025-11-25），例如
+  Codex CLI；使用 MCP 2026-07-28 的客户端（例如 Claude Code）照常可用。从电脑连接时，本机转发端口可以任选
+  （`adb forward tcp:<任意端口> tcp:8765`）。
+- 本地 MCP 页面新增「复制安装提示词」：粘贴给你的 AI 智能体（Codex、Claude Code、opencode 等），它会自己转发端口、
+  把卓爱桥加进自己的 MCP 配置并检查连接。带占位符的同一份提示词见 `AGENT-SETUP.md`。提示词里包含访问令牌，复制时会
+  标记为敏感内容。
+- `visual`：发布的输入 schema 现在把点击和长按的每种目标都列成独立的选项，会把嵌套 schema 展开的连接器不再以
+  「Value matches multiple schemas」拒绝坐标点击。卓爱桥实际接受的输入没有变化。
+- 面向贡献者：Root 后台和 Rust 核心现在可以在桌面 Linux 上编译并通过测试。
+
 ## 0.5.8
 
 ### English

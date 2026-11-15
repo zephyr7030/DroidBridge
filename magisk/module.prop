@@ -1,7 +1,7 @@
 id=droidbridge
 name=DroidBridge
-version=0.5.8
-versionCode=5008
+version=0.5.9
+versionCode=5009
 author=DroidBridge
 description=DroidBridge root backend; installs the DroidBridge Root app
 updateJson=https://raw.githubusercontent.com/zephyr7030/DroidBridge/main/magisk/update.json
