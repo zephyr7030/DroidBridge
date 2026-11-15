@@ -165,6 +165,10 @@
     <string name="mcp_endpoint">端点</string>
     <string name="mcp_protocol_version">协议版本</string>
     <string name="mcp_runtime_state">运行状态</string>
+    <string name="mcp_setup_prompt">让 AI 智能体自己接入</string>
+    <string name="mcp_setup_prompt_copy">复制安装提示词</string>
+    <string name="mcp_setup_prompt_summary">粘贴给 Codex、Claude Code、opencode 或其他智能体即可。提示词里包含访问令牌。</string>
+    <string name="mcp_setup_prompt_template">请把你自己接入卓爱桥（DroidBridge），它是我 Android 手机上的 MCP 服务。\n\n服务名称：droidbridge\n地址：%1$s（Streamable HTTP）\n请求头：Authorization: Bearer %3$s\n\n1. 如果你不是运行在这台手机上，先确认 `adb devices` 能列出这台手机，再执行 `adb forward tcp:%2$s tcp:%2$s`。如果列不出手机，就停下来告诉我。\n2. 按你所用 MCP 客户端当前的文档或它的 `mcp add --help`，把这个服务作为远程 HTTP 服务加进你自己的配置，填上面的地址和请求头。它不使用 OAuth；如果你的客户端默认对远程服务走 OAuth，请对这个服务关掉。\n3. 调用 droidbridge 的 `context` 工具，参数 {\"action\": \"status\", \"input\": {}}，然后告诉我它报告的就绪状态。如果新加的服务要重启后才能用，请告诉我重启你，等我重启后再调用。\n\n这个令牌可以访问我的手机：只把它保存在这份 MCP 配置里，不要在回复里重复给我。</string>
     <string name="mcp_state_enabled_not_running">已启用，未运行</string>
     <string name="mcp_state_off">已关闭</string>
     <string name="mcp_state_running">运行中</string>
@@ -225,6 +229,7 @@
     <string name="shizuku_state_not_running">未运行</string>
     <string name="snackbar_bulk_delete_result">已删除 %1$d 项；%2$d 项失败。</string>
     <string name="snackbar_run_started">已开始运行</string>
+    <string name="snackbar_setup_prompt_copied">安装提示词已复制</string>
     <string name="snackbar_token_copied">访问令牌已复制</string>
     <string name="state_active">已启用</string>
     <string name="state_background_restricted">已被限制，请在应用信息中关闭</string>

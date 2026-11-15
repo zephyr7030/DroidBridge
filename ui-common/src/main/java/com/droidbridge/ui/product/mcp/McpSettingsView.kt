@@ -6,8 +6,21 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 
-/** The MCP revision both agent connections speak; About shows it. */
+/** The MCP revision both agent connections speak; About shows it. Local MCP also serves the 2025 revisions. */
 const val MCP_PROTOCOL_VERSION = "2026-07-28"
+
+/**
+ * The prompt a user hands an AI agent so it connects itself to Local MCP. The localized template
+ * takes the endpoint (%1$s), its port for `adb forward` (%2$s) and the bearer token (%3$s).
+ */
+object McpSetupPrompt {
+    /** Returns null when the endpoint names no usable port. */
+    fun compose(template: String, endpoint: String, token: String): String? {
+        val port = runCatching { java.net.URI(endpoint).port }.getOrNull()?.takeIf { it in 1..65535 } ?: return null
+        if (token.isEmpty()) return null
+        return String.format(java.util.Locale.ROOT, template, endpoint, port.toString(), token)
+    }
+}
 
 enum class McpListenerState { Stopped, Running, Failed }
 

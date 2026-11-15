@@ -2,8 +2,10 @@ package com.droidbridge.ui.mcp
 
 import android.Manifest
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Intent
+import android.os.PersistableBundle
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +53,7 @@ import com.droidbridge.ui.product.home.HomeProjection
 import com.droidbridge.ui.product.mcp.McpListenerState
 import com.droidbridge.ui.product.mcp.McpSettingsReplies
 import com.droidbridge.ui.product.mcp.McpSettingsView
+import com.droidbridge.ui.product.mcp.McpSetupPrompt
 import com.droidbridge.ui.product.mcp.TunnelRuntimeState
 import com.droidbridge.ui.product.mcp.TunnelSettingsReplies
 import com.droidbridge.ui.product.mcp.TunnelSettingsView
@@ -153,6 +156,8 @@ fun McpRoute(
     val snackbars = remember { SnackbarHostState() }
     var confirmRotate by remember { mutableStateOf(false) }
     val copiedText = stringResource(R.string.snackbar_token_copied)
+    val promptCopiedText = stringResource(R.string.snackbar_setup_prompt_copied)
+    val promptTemplate = stringResource(R.string.mcp_setup_prompt_template)
     // Denial still commits enable; the warning row then explains the limited visibility.
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.notificationsDecided()
@@ -289,6 +294,32 @@ fun McpRoute(
                         }
                     }
                 }
+                item {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.mcp_setup_prompt)) },
+                        leadingContent = { RowIcon(R.drawable.ic_smart_toy) },
+                        supportingContent = { Text(stringResource(R.string.mcp_setup_prompt_summary)) },
+                    )
+                    Row(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        // An agent can only verify a listener that is serving.
+                        Button(
+                            enabled = settings.enabled && settings.listener == McpListenerState.Running,
+                            onClick = {
+                                scope.launch {
+                                    val prompt = viewModel.tokenForCopy()?.let { token ->
+                                        McpSetupPrompt.compose(promptTemplate, settings.endpoint, token)
+                                    }
+                                    val copied = prompt != null && runCatching {
+                                        context.getSystemService(ClipboardManager::class.java)
+                                            .setPrimaryClip(sensitiveClip(promptCopiedText, prompt))
+                                    }.isSuccess
+                                    if (copied) snackbars.showSnackbar(promptCopiedText) else viewModel.copyFailed()
+                                }
+                            },
+                            modifier = Modifier.testTag("mcp:setup_prompt"),
+                        ) { Text(stringResource(R.string.mcp_setup_prompt_copy)) }
+                    }
+                }
             }
         }
     }
@@ -330,3 +361,9 @@ internal fun tunnelStatusLabel(settings: TunnelSettingsView?): Int = when {
 }
 
 private const val MASKED_TOKEN = "••••••••••••"
+
+/** Marked sensitive so the system clipboard preview does not show the token it carries. */
+private fun sensitiveClip(label: String, text: String): ClipData =
+    ClipData.newPlainText(label, text).apply {
+        description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+    }

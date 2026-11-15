@@ -168,6 +168,10 @@
     <string name="mcp_endpoint">Endpoint</string>
     <string name="mcp_protocol_version">Protocol version</string>
     <string name="mcp_runtime_state">Runtime state</string>
+    <string name="mcp_setup_prompt">Let your AI agent connect itself</string>
+    <string name="mcp_setup_prompt_copy">Copy setup prompt</string>
+    <string name="mcp_setup_prompt_summary">Paste it into Codex, Claude Code, opencode or another agent. It contains the access token.</string>
+    <string name="mcp_setup_prompt_template">Connect yourself to DroidBridge, the MCP server on my Android phone.\n\nServer name: droidbridge\nURL: %1$s (Streamable HTTP)\nHeader: Authorization: Bearer %3$s\n\n1. If you are not running on the phone itself, check that `adb devices` lists the phone, then run `adb forward tcp:%2$s tcp:%2$s`. If no phone is listed, stop and tell me.\n2. Add the server to your own MCP client\'s configuration as a remote HTTP server with this URL and header, the way your client\'s current documentation or its `mcp add --help` describes. It uses no OAuth: if your client tries OAuth for remote servers, turn that off for this server.\n3. Call the droidbridge tool `context` with {\"action\": \"status\", \"input\": {}} and tell me the readiness it reports. If the new server\'s tools only appear after a restart, tell me to restart you, and make that call once I have.\n\nThe token gives access to my phone: keep it only in that MCP configuration and do not repeat it back to me.</string>
     <string name="mcp_state_enabled_not_running">Enabled, not running</string>
     <string name="mcp_state_off">Off</string>
     <string name="mcp_state_running">Running</string>
@@ -228,6 +232,7 @@
     <string name="shizuku_state_not_running">Not running</string>
     <string name="snackbar_bulk_delete_result">Deleted %1$d, %2$d failed</string>
     <string name="snackbar_run_started">Run started</string>
+    <string name="snackbar_setup_prompt_copied">Setup prompt copied</string>
     <string name="snackbar_token_copied">Access token copied</string>
     <string name="state_active">Active</string>
     <string name="state_background_restricted">Restricted, turn it off in App info</string>
